@@ -1,0 +1,25 @@
+##=== TEST.nightly.report - Report description for nightly -----*- perl -*-===##
+#
+# This file defines a report to be generated for the nightly tests.
+#
+##===----------------------------------------------------------------------===##
+
+# Sort by program name
+$SortCol = 0;
+$TrimRepeatedPrefix = 1;
+
+# These are the columns for the report.  The first entry is the header for the
+# column, the second is the regex to use to match the value.  Empty list create
+# separators, and closures may be put in for custom processing.
+(
+# Name
+ ["Program"  , '\'([^\']+)\' Program'],
+ [],
+# Times
+ ["NumInstrumentedLoops"    , '([0-9]+).*Number of Instrumented Loops'],
+ ["NumNonIntegerConditions", '([0-9]+).*Number of Non-Integer Loop Conditions'],
+ ["NumUnknownConditions"    , '([0-9]+).*Number of Unknown Loop Conditions'],
+ ["ExitBlocksNotFound"    , '([0-9]+).*Number of Exit Blocks not found'],  
+ [],
+ ["Transformation time", '([0-9.]+) \([^)]+\)[ 0-9A-Za-z]+Trip Count Generator'],
+);

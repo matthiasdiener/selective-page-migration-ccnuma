@@ -1,0 +1,33 @@
+##=== TEST.nightly.report - Report description for nightly -----*- perl -*-===##
+#
+# This file defines a report to be generated for the nightly tests.
+#
+##===----------------------------------------------------------------------===##
+
+# Sort by program name
+$SortCol = 0;
+$TrimRepeatedPrefix = 1;
+
+# These are the columns for the report.  The first entry is the header for the
+# column, the second is the regex to use to match the value.  Empty list create
+# separators, and closures may be put in for custom processing.
+(
+# Name
+ ["Program"  , '\'([^\']+)\' Program'],
+ [],
+# Times
+ ["NumCFGLoops"             , '([0-9]+).*Total Number of Loops'],
+ ["NumCFGNestedLoops"       , '([0-9]+).*Number of CFG Nested Loops'],
+ ["NumCFGLoopsSingleExit"   , '([0-9]+).*Number of Loops with a Single Exit point'],
+ ["NumUnhandledExits"       , '([0-9]+).*Number of not handled exit points (not branch or switch)'],  
+ [],
+ ["NumAnalyzedSCCs"         , '([0-9]+).*Number of Analyzed DepGraph SCCs'],
+ ["NumSinglePathSCCs"       , '([0-9]+).*Number of Single-Path DepGraph SCCs'],
+ ["NumTwoPathSCCs"          , '([0-9]+).*Number of 2\-Path DepGraph SCCs'],
+ ["NumThreePathSCCs"        , '([0-9]+).*Number of 3\-Path DepGraph SCCs'],  
+ ["NumFourPathSCCs"         , '([0-9]+).*Number of 4\-Path DepGraph SCCs'], 
+ ["NumFivePathSCCs"         , '([0-9]+).*Number of 5\-Path DepGraph SCCs'], 
+ ["NumThousandPlusPathSCCs" , '([0-9]+).*Number of \+999\-Path DepGraph SCCs'], 
+ [], 
+ ["Analysis time", '([0-9.]+) \([^)]+\)[ 0-9A-Za-z]+Loop Structure Analysis'],
+);
