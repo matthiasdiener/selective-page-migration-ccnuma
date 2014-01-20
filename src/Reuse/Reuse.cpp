@@ -111,7 +111,7 @@ bool Reuse::runOnFunction(Function &F) {
       GENEXPR_DEBUG(dbgs() << "Reuse: backedge is: '" << BackEdge->getName()
                            << "' (" << BackEdge << ")\n");
 
-      // Gathers all GEPs inside the loop body.
+      // Gather all GEPs inside the loop body.
       // TODO: Might not work for multiple nested loops.
       // TODO: We currently assume GEPs are immediately before a load/store.
       std::vector<Instruction*> GEPs;
@@ -157,7 +157,7 @@ bool Reuse::runOnFunction(Function &F) {
         GENEXPR_DEBUG(dbgs() << "Reuse: step function composition is: "
                              << StepCmps << "\n");
 
-        // Applying the composed step function to the initial value of the
+        // Applying to the composed step function the initial value of the
         // induction variable gives the its final value.
         RExpr IndvarEnd = StepCmps.subs(Indvar, IndvarStart);
         GENEXPR_DEBUG(dbgs() << "Reuse: induction variable's final value is: "
@@ -211,9 +211,9 @@ bool Reuse::runOnFunction(Function &F) {
             GENEXPR_DEBUG(dbgs() << "Reuse: subscript end: "
                                  << SubscriptEndExpr << "\n");
 
-            // TODO: consider replacing other induction variables with their
+            // TODO: Consider replacing other induction variables with their
             // know bounds. This would let us hoist more function calls at
-            // at the cost of (probably small) precision.
+            // at the (probably small) cost of precision.
 
             // Place a function call with the following information:
             // * the array being accessed;
@@ -271,7 +271,7 @@ RExpr Reuse::genExprFromUntil(Value *From, PHINode *Until, Loop *L) {
   if (From == Until) {
     return RExpr(Until);
   }
-  // Value is a loop invariant, can insert as a symbol.
+  // Value is loop invariant, can insert as a symbol.
   else if (L->isLoopInvariant(From))
     return RExpr(From);
   // Value is not an instruction.
@@ -280,7 +280,8 @@ RExpr Reuse::genExprFromUntil(Value *From, PHINode *Until, Loop *L) {
 
   Instruction *FromI = cast<Instruction>(From);
 
-  // Make sure we haven't reached an instruction before the final.
+  // Make sure we haven't reached an instruction before the final
+  // instruction - the "Until" phi-node.
   BasicBlock *FromBB = FromI->getParent(), *UntilBB = Until->getParent();
   if ((FromBB == UntilBB && isa<PHINode>(FromI)) ||
       DT_->dominates(FromBB, UntilBB))
