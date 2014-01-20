@@ -35,7 +35,7 @@ static Value *InsertExprForIRB(RExpr Ex, IRBuilder<> &IRB, LLVMContext &C,
     bool IsAdd = Ex.isAdd(), IsMul = Ex.isMul();
     if (IsAdd || IsMul) {
       // The accumulator will keep track of the last generated expression, to be
-      // used the the next.
+      // used in the next iteration.
       Value *Acc = nullptr;
       for (auto EI : Ex) {
         Value *Curr = InsertExprForIRB(EI, IRB, C);
