@@ -1,4 +1,4 @@
-##===- lib/Analysis/DepGraph/Makefile -----------*- Makefile -*-===##
+##===- lib/Analysis/SymbolicRA/Makefile -----------*- Makefile -*-===##
 #
 #                     The LLVM Compiler Infrastructure
 #
@@ -8,7 +8,7 @@
 ##===----------------------------------------------------------------------===##
 
 LEVEL = ../../..
-LIBRARYNAME = DepGraph
+LIBRARYNAME = SymbolicRA
 LOADABLE_MODULE = 1
 USEDLIBS = 
 REQUIRES_RTTI=1

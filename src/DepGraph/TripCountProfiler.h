@@ -12,6 +12,7 @@
 #include "ExitInfo.h"
 #include "LoopControllersDepGraph.h"
 #include "LoopNormalizerAnalysis.h"
+#include "TripCountAnalysis.h"
 #include "llvm/Pass.h"
 #include "llvm/IR/IRBuilder.h"
 #include <inttypes.h>
@@ -26,8 +27,6 @@ namespace llvm {
 	public:
 		static char ID;
 
-		Value* fPrintf;
-		Value* GVstderr;
 		Value* formatStr;
 		Value* moduleIdentifierStr;
 		llvm::LLVMContext* context;
@@ -37,7 +36,7 @@ namespace llvm {
 		Value* flushLoopStats;
 
 		TripCountProfiler(): FunctionPass(ID),
-				             fPrintf(NULL), GVstderr(NULL), formatStr(NULL), moduleIdentifierStr(NULL),
+				             formatStr(NULL), moduleIdentifierStr(NULL),
 				             context(NULL), initLoopList(NULL), collectLoopData(NULL), flushLoopStats(NULL) {};
 		~TripCountProfiler(){};
 
@@ -50,11 +49,12 @@ namespace llvm {
 			AU.addRequired<LoopControllersDepGraph>();
 			AU.addRequired<LoopNormalizerAnalysis>();
 
+			AU.addRequired<TripCountAnalysis>();
+
 		}
 
 		Constant* strToLLVMConstant(std::string s);
 		virtual bool doInitialization(Module &M);
-		void createFPrintf(Module& M);
 
 		bool runOnFunction(Function &F);
 

@@ -23,6 +23,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "LoopInfoEx.h"
 #include "AliasSets.h"
+#include "GenericGraph.h"
 #include <list>
 #include <map>
 #include <set>
@@ -323,6 +324,9 @@ private:
 		//Graph analysis - Strongly connected components
 		std::map<int, std::set<GraphNode*> > sCCs;
 		std::map<GraphNode*, int> reverseSCCMap;
+		std::list<int> topologicalOrderedSCCs;
+
+
 
 		AliasSets *AS;
 
@@ -443,6 +447,8 @@ public:
 
         void recomputeSCCs();
         std::map<int, std::set<GraphNode*> > getSCCs();
+        std::list<int> getSCCTopologicalOrder();
+
         int getSCCID(GraphNode* node);
         std::set<GraphNode*> getSCC(int ID);
 

@@ -1173,6 +1173,7 @@ void llvm::Graph::recomputeSCCs(){
 
 	sCCs.clear();
 	reverseSCCMap.clear();
+	topologicalOrderedSCCs.clear();
 
 	int currentIndex = 0;
 	std::map<GraphNode*, int> index;
@@ -1213,6 +1214,68 @@ std::map<int, std::set<GraphNode*> > llvm::Graph::getSCCs(){
 	}
 
 	return sCCs;
+}
+
+std::list<int> llvm::Graph::getSCCTopologicalOrder(){
+
+	if (!topologicalOrderedSCCs.size()) {
+
+		recomputeSCCs();
+
+		GenericGraph<int> dagSCC;
+
+		//Step 1: Build SCC DAG
+		std::map<int, std::set<GraphNode*> >  localSCCs = getSCCs();
+
+		//For each SCC....
+		for (std::map<int, std::set<GraphNode*> >::iterator it = localSCCs.begin(); it != localSCCs.end(); it++){
+
+			int currentSCC = it->first;
+
+			GenericGraphNode<int>* currentSCCNode = dagSCC.addNode(currentSCC);
+
+			//... iterate over its nodes...
+			for ( std::set<GraphNode*>::iterator node = it->second.begin(); node != it->second.end(); node++ ){
+				GraphNode* currentNode = *node;
+
+				//... and create edges to the SCCs of the successors
+				std::map<GraphNode*, edgeType> successors = currentNode->getSuccessors();
+				for (std::map<GraphNode*, edgeType>::iterator succ = successors.begin(); succ != successors.end(); succ++){
+
+					GraphNode* succNode = succ->first;
+					int succSCC = getSCCID(succNode);
+
+					// It's a DAG. No self loops!
+					if (currentSCC != succSCC) {
+						GenericGraphNode<int>* succSCCNode = dagSCC.addNode(succSCC);
+						dagSCC.addEdge(currentSCCNode, succSCCNode, 1);
+					}
+
+				}
+
+			}
+
+		}
+
+		assert (localSCCs.size() == dagSCC.getNumNodes() && "DAG of SCCs have a wrong number of nodes");
+
+		//Step 2: Compute topological order (greedy algorithm)
+		while ( dagSCC.getNumNodes() > 0  ) {
+
+			GenericGraphNode<int>* currentNode = dagSCC.getFirstNodeWithoutPredecessors();
+
+			assert(currentNode && "DAG of SCCs have a cycle (it is not a valid DAG)!");
+
+			int SCCID = **currentNode;
+
+			topologicalOrderedSCCs.push_back(SCCID);
+
+			dagSCC.removeNode(currentNode);
+		}
+
+	}
+
+	return topologicalOrderedSCCs;
 }
 
 int llvm::Graph::getSCCID(GraphNode* node) {
@@ -1614,7 +1677,7 @@ void llvm::Graph::Guider::setNodeAttrs(GraphNode* n, std::string attrs) {
 
 void llvm::Graph::Guider::setEdgeAttrs(GraphNode* u, GraphNode* v,
                 std::string attrs) {
-        edgeAttrs[std::make_pair<GraphNode*, GraphNode*>(u, v)] = attrs;
+        edgeAttrs[std::pair<GraphNode*, GraphNode*>(u, v)] = attrs;
 }
 
 void llvm::Graph::Guider::clear() {
@@ -1627,7 +1690,7 @@ std::string llvm::Graph::Guider::getNodeAttrs(GraphNode* n) {
 }
 
 std::string llvm::Graph::Guider::getEdgeAttrs(GraphNode* u, GraphNode* v) {
-        return edgeAttrs[std::make_pair<GraphNode*, GraphNode*>(u, v)];
+        return edgeAttrs[std::pair<GraphNode*, GraphNode*>(u, v)];
 }
 
 char moduleDepGraph::ID = 0;

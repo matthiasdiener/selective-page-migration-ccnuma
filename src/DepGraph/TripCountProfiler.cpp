@@ -12,16 +12,8 @@
 #include "TripCountProfiler.h"
 
 STATISTIC(NumInstrumentedLoops, "Number of Instrumented Loops");
-
-STATISTIC(NumIntervalLoops, "Number of Interval Loops");
-STATISTIC(NumEqualityLoops, "Number of Equality Loops");
-STATISTIC(NumOtherLoops,    "Number of Other Loops");
-
-STATISTIC(NumUnknownConditionsIL, "Number of Interval Loops With Unknown TripCount");
-STATISTIC(NumUnknownConditionsEL, "Number of Equality Loops With Unknown TripCount");
-STATISTIC(NumUnknownConditionsOL, "Number of Other Loops With Unknown TripCount");
-
-STATISTIC(NumIncompatibleOperandTypes, "Number of Loop Conditions With Incompatible Operands");
+STATISTIC(NumUnknownTripCount,	"Number of Unknown Estimated Trip Count");
+STATISTIC(NumIgnoredLoops,		"Number of Ignored Loops");
 
 
 using namespace llvm;
@@ -75,104 +67,19 @@ void llvm::TripCountProfiler::saveTripCount(std::set<BasicBlock*> BBs, AllocaIns
 
 	}
 
-//	std::vector<Value*> args2;
-//	args2.push_back(stderr);
-//	args2.push_back(formatStr);
-//	args2.push_back(loopIdentifier);
-//	args2.push_back(estimatedTripCount);
-//	args2.push_back(tripCount);
-//	llvm::ArrayRef<llvm::Value *> arrayArgs2(args2);
-//	Builder.CreateCall(fPrintf, arrayArgs2, "");
-
 }
 
-void llvm::TripCountProfiler::createFPrintf(Module& M) {
-
-	LLVMContext* context = &M.getContext();
-
-	Type* IO_FILE_PTR_ty;
-	GVstderr = M.getGlobalVariable("stderr");
-	if (GVstderr != NULL) {
-		IO_FILE_PTR_ty = GVstderr->getType();
-		IO_FILE_PTR_ty = IO_FILE_PTR_ty->getContainedType(0);
-	} else {
-		StructType* IO_FILE_ty = StructType::create(*context,
-													"struct._IO_FILE");
-		IO_FILE_PTR_ty = PointerType::getUnqual(IO_FILE_ty);
-		StructType* IO_marker_ty = StructType::create(*context,
-													  "struct._IO_marker");
-		PointerType* IO_marker_ptr_ty = PointerType::getUnqual(IO_marker_ty);
-
-		std::vector<Type*> Elements;
-		Elements.push_back(Type::getInt32Ty(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(IO_marker_ptr_ty);
-		Elements.push_back(IO_FILE_PTR_ty);
-		Elements.push_back(Type::getInt32Ty(*context));
-		Elements.push_back(Type::getInt32Ty(*context));
-		Elements.push_back(Type::getInt32Ty(*context));
-		Elements.push_back(Type::getInt16Ty(*context));
-		Elements.push_back(Type::getInt8Ty(*context));
-		Elements.push_back(ArrayType::get(Type::getInt8Ty(*context), 1));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt64Ty(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt8PtrTy(*context));
-		Elements.push_back(Type::getInt32Ty(*context));
-		Elements.push_back(Type::getInt32Ty(*context));
-		Elements.push_back(ArrayType::get(Type::getInt8Ty(*context), 40));
-		IO_FILE_ty->setBody(Elements, false);
-
-		std::vector<Type*> Elements2;
-		Elements2.push_back(IO_marker_ptr_ty);
-		Elements2.push_back(IO_FILE_PTR_ty);
-		Elements2.push_back(Type::getInt32Ty(*context));
-		IO_marker_ty->setBody(Elements2, false);
-		GVstderr = new GlobalVariable(M, IO_FILE_PTR_ty, false,
-									  GlobalValue::ExternalLinkage, NULL,
-									  "stderr");
-	}
-
-	//Here we declare the types of the parameters of our fprintf
-	std::vector<Type*> Params;
-	Params.push_back(IO_FILE_PTR_ty);										//FILE* 	>> stderr
-	Params.push_back(PointerType::getUnqual(Type::getInt8Ty(*context)));	//char* 	>> Format string, like "TripCount: %d %d /n"
-	Params.push_back(Type::getInt64Ty(*context));							//Int64 	>> Loop Identifier
-	Params.push_back(Type::getInt64Ty(*context));							//Int64 	>> Estimated Trip Count
-	Params.push_back(Type::getInt64Ty(*context));							//Int64 	>> Actual Trip Count
-
-	Type* Ty = Type::getVoidTy(*context);
-	FunctionType *T = FunctionType::get(Ty, Params, true);
-	fPrintf = M.getOrInsertFunction("fprintf", T);
-
-}
 
 
 
 bool llvm::TripCountProfiler::doInitialization(Module& M) {
-	createFPrintf(M);
+
 	context = &M.getContext();
 
 	NumInstrumentedLoops = 0;
-	NumIntervalLoops = 0;
-	NumEqualityLoops = 0;
-	NumOtherLoops = 0;
+	NumUnknownTripCount = 0;
+	NumIgnoredLoops = 0;
 
-	NumUnknownConditionsIL = 0;
-	NumUnknownConditionsEL = 0;
-	NumUnknownConditionsOL = 0;
 
 
 	/*
@@ -205,124 +112,6 @@ bool llvm::TripCountProfiler::doInitialization(Module& M) {
 	return true;
 }
 
-Value* TripCountProfiler::generateEstimatedTripCount(BasicBlock* header, BasicBlock* entryBlock, Value* Op1, Value* Op2, CmpInst* CI){
-
-	bool isSigned = CI->isSigned();
-
-
-	BasicBlock* GT = BasicBlock::Create(*context, "", header->getParent(), header);
-	BasicBlock* LE = BasicBlock::Create(*context, "", header->getParent(), header);
-	BasicBlock* PHI = BasicBlock::Create(*context, "", header->getParent(), header);
-
-	TerminatorInst* T = entryBlock->getTerminator();
-
-	IRBuilder<> Builder(T);
-
-	Value* cmp;
-
-	//Make sure the two operands have the same type
-	if (Op1->getType() != Op2->getType()) {
-
-		if (Op1->getType()->getIntegerBitWidth() > Op2->getType()->getIntegerBitWidth() ) {
-			//expand op2
-			if (isSigned) Op2 = Builder.CreateSExt(Op2, Op1->getType(), "");
-			else Op2 = Builder.CreateZExt(Op2, Op1->getType(), "");
-
-		} else {
-			//expand op1
-			if (isSigned) Op1 = Builder.CreateSExt(Op1, Op2->getType(), "");
-			else Op1 = Builder.CreateZExt(Op1, Op2->getType(), "");
-
-		}
-
-	}
-
-	assert(Op1->getType() == Op2->getType() && "Operands with different data types, even after adjust!");
-
-	Builder.SetInsertPoint(T);
-
-	if (isSigned)
-		cmp = Builder.CreateICmpSGT(Op1,Op2,"");
-	else
-		cmp = Builder.CreateICmpUGT(Op1,Op2,"");
-
-	Builder.CreateCondBr(cmp, GT, LE, NULL);
-	T->eraseFromParent();
-
-	/*
-	 * estimatedTripCount = |Op1 - Op2|
-	 *
-	 * We will create the same sub in both GT and in LE blocks, but
-	 * with inverted operand order. Thus, the result of the subtraction
-	 * will be always positive.
-	 */
-
-	Builder.SetInsertPoint(GT);
-	Value* sub1;
-	if (isSigned) {
-		//We create a signed sub
-		sub1 = Builder.CreateNSWSub(Op1, Op2);
-	} else {
-		//We create an unsigned sub
-		sub1 = Builder.CreateNUWSub(Op1, Op2);
-	}
-	Builder.CreateBr(PHI);
-
-	Builder.SetInsertPoint(LE);
-	Value* sub2;
-	if (isSigned) {
-		//We create a signed sub
-		sub2 = Builder.CreateNSWSub(Op2, Op1);
-	} else {
-		//We create an unsigned sub
-		sub2 = Builder.CreateNUWSub(Op2, Op1);
-	}
-	Builder.CreateBr(PHI);
-
-	Builder.SetInsertPoint(PHI);
-	PHINode* sub = Builder.CreatePHI(sub2->getType(), 2, "");
-	sub->addIncoming(sub1, GT);
-	sub->addIncoming(sub2, LE);
-
-	Value* EstimatedTripCount;
-	if (isSigned) 	EstimatedTripCount = Builder.CreateSExtOrBitCast(sub, Type::getInt64Ty(*context), "EstimatedTripCount");
-	else			EstimatedTripCount = Builder.CreateZExtOrBitCast(sub, Type::getInt64Ty(*context), "EstimatedTripCount");
-
-	switch(CI->getPredicate()){
-		case CmpInst::ICMP_UGE:
-		case CmpInst::ICMP_ULE:
-		case CmpInst::ICMP_SGE:
-		case CmpInst::ICMP_SLE:
-			{
-				Constant* One = ConstantInt::get(EstimatedTripCount->getType(), 1);
-				EstimatedTripCount = Builder.CreateAdd(EstimatedTripCount, One);
-				break;
-			}
-		default:
-			break;
-	}
-
-
-
-	Builder.CreateBr(header);
-
-	//Adjust the PHINodes of the loop header accordingly
-	for (BasicBlock::iterator it = header->begin(); it != header->end(); it++){
-		Instruction* tmp = it;
-
-		if (PHINode* I = dyn_cast<PHINode>(tmp)){
-			int i = I->getBasicBlockIndex(entryBlock);
-			if (i >= 0){
-				I->setIncomingBlock(i,PHI);
-			}
-		}
-
-	}
-
-
-
-	return EstimatedTripCount;
-}
 
 Instruction* getNextInstruction(Instruction* I){
 
@@ -418,7 +207,8 @@ Value* TripCountProfiler::getValueAtEntryPoint(Value* source, BasicBlock* loopHe
 		unsigned int prev_size = ln.entryBlocks[loopHeader]->getInstList().size();
 
 		Instruction* NEW_INST = InstToCopy->clone();
-		ln.entryBlocks[loopHeader]->getInstList().push_front(NEW_INST);
+				ln.entryBlocks[loopHeader]->getInstList().insert(ln.entryBlocks[loopHeader]->getFirstInsertionPt(), NEW_INST);
+
 
 		for(unsigned int i = 0; i < InstToCopy->getNumOperands(); i++){
 
@@ -432,7 +222,7 @@ Value* TripCountProfiler::getValueAtEntryPoint(Value* source, BasicBlock* loopHe
 
 				//Undo changes in the entry block
 				while (ln.entryBlocks[loopHeader]->getInstList().size() > prev_size) {
-					ln.entryBlocks[loopHeader]->getInstList().pop_front();
+					ln.entryBlocks[loopHeader]->getFirstInsertionPt()->eraseFromParent();
 				}
 
 				return NULL;
@@ -494,13 +284,28 @@ BasicBlock* TripCountProfiler::findLoopControllerBlock(Loop* l){
 	return *(exitBlocks.begin());
 }
 
+bool isIntervalComparison(ICmpInst* CI){
+
+	switch(CI->getPredicate()){
+	case ICmpInst::ICMP_SGE:
+	case ICmpInst::ICMP_SGT:
+	case ICmpInst::ICMP_UGE:
+	case ICmpInst::ICMP_UGT:
+	case ICmpInst::ICMP_SLE:
+	case ICmpInst::ICMP_SLT:
+	case ICmpInst::ICMP_ULE:
+	case ICmpInst::ICMP_ULT:
+		return true;
+		break;
+	default:
+		return false;
+	}
+
+}
 
 bool TripCountProfiler::runOnFunction(Function &F){
 
 	IRBuilder<> Builder(F.getEntryBlock().getTerminator());
-//	if (!formatStr){
-//		formatStr = Builder.CreateGlobalStringPtr("TripCount " + F.getParent()->getModuleIdentifier() + ".%" PRId64 ": %" PRId64 " %d\n",    "formatStr");
-//	}
 
 	if (!moduleIdentifierStr){
 		moduleIdentifierStr = Builder.CreateGlobalStringPtr(F.getParent()->getModuleIdentifier(), "moduleIdentifierStr");
@@ -517,6 +322,7 @@ bool TripCountProfiler::runOnFunction(Function &F){
 
 
 	LoopInfoEx& li = getAnalysis<LoopInfoEx>();
+	TripCountAnalysis& tca = getAnalysis<TripCountAnalysis>();
 
 
 	/*
@@ -554,8 +360,8 @@ bool TripCountProfiler::runOnFunction(Function &F){
 
 	for(LoopInfoEx::iterator lit = li.begin(); lit != li.end(); lit++){
 
-		//Indicates if we don't have ways to determine the trip count
-		bool unknownTC = false;
+
+		bool mustInstrument = true;
 
 		Loop* loop = *lit;
 
@@ -569,16 +375,8 @@ bool TripCountProfiler::runOnFunction(Function &F){
 		 * integer comparisons.
 		 */
 		BasicBlock* exitBlock = findLoopControllerBlock(loop);
+		assert (exitBlock && "Exit block not found!");
 
-		if (!exitBlock){
-
-			errs() 	<< "Exit block not found!\n"
-					<< "Function: " << header->getParent()->getName() << "\n"
-					<< "Loop header:" << *header;
-
-			continue;
-
-		}
 
 		TerminatorInst* T = exitBlock->getTerminator();
 		BranchInst* BI = dyn_cast<BranchInst>(T);
@@ -590,30 +388,15 @@ bool TripCountProfiler::runOnFunction(Function &F){
 		int LoopClass;
 
 		if (!CI) {
-
-			unknownTC = true;
-			NumOtherLoops++;
-			NumUnknownConditionsOL++;
-
 			LoopClass = 2;
+			mustInstrument = false;
 		}
 		else {
 
-			switch(CI->getPredicate()){
-			case ICmpInst::ICMP_SGE:
-			case ICmpInst::ICMP_SGT:
-			case ICmpInst::ICMP_UGE:
-			case ICmpInst::ICMP_UGT:
-			case ICmpInst::ICMP_SLE:
-			case ICmpInst::ICMP_SLT:
-			case ICmpInst::ICMP_ULE:
-			case ICmpInst::ICMP_ULT:
+			if (isIntervalComparison(CI)) {
 				LoopClass = 0;
-				NumIntervalLoops++;
-				break;
-			default:
+			} else {
 				LoopClass = 1;
-				NumEqualityLoops++;
 			}
 
 
@@ -623,71 +406,55 @@ bool TripCountProfiler::runOnFunction(Function &F){
 
 			if((!Op1) || (!Op2) ) {
 
-//				errs() << "\n\n=======================UNKNOWN BEGIN==============================\n";
-//				errs() << "Op1:" << *CI->getOperand(0) << "\n";
-//				if (Op1) errs() << "Op1_Entry: " << *Op1 << "\n";
-//				else errs() << "Op1_Entry: NULL\n";
-//				errs() << "\n";
-//
-//				errs() << "Op2:" << *CI->getOperand(1) << "\n";
-//				if (Op2) errs() << "Op2_Entry: " << *Op2 << "\n";
-//				else errs() << "Op2_Entry: NULL\n";
-//				errs() << "\n";
-//
-//				errs() << *header << "\n";
-//				errs() << "===============================END================================\n\n\n";
-
-				if (!LoopClass) NumUnknownConditionsIL++;
-				else 			NumUnknownConditionsEL++;
-
-				unknownTC = true;
 			} else if((!Op1->getType()->isIntegerTy()) || (!Op2->getType()->isIntegerTy())) {
-				NumIncompatibleOperandTypes++;
-				unknownTC = true;
+				mustInstrument = false;
 			}
 		}
 
-		Value* estimatedTripCount;
+		Value* estimatedTripCount = tca.getTripCount(header);
 
-		if(unknownTC){
+		if((!estimatedTripCount) && mustInstrument){
 			estimatedTripCount = unknownTripCount;
-		}else {
-			estimatedTripCount = generateEstimatedTripCount(header, entryBlock, Op1, Op2, CI);
+			NumUnknownTripCount++;
 		}
 
 
+		if (estimatedTripCount) {
 
-		//Before the loop starts, the trip count is zero
-		AllocaInst* tripCount = insertAlloca(entryBlock, constZero);
+			//Before the loop starts, the trip count is zero
+			AllocaInst* tripCount = insertAlloca(entryBlock, constZero);
 
-		//Every time the loop header is executed, we increment the trip count
-		insertAdd(header, tripCount);
+			//Every time the loop header is executed, we increment the trip count
+			insertAdd(header, tripCount);
 
-
-		/*
-		 * We will collect the actual trip count and the estimate trip count in every
-		 * basic block that is outside the loop
-		 */
-		std::set<BasicBlock*> blocksToInstrument;
-		SmallVector<BasicBlock*, 2> exitBlocks;
-		loop->getExitBlocks(exitBlocks);
-		for (SmallVectorImpl<BasicBlock*>::iterator eb = exitBlocks.begin(); eb !=  exitBlocks.end(); eb++){
-
-			BasicBlock* CurrentEB = *eb;
 
 			/*
-			 * Does not instrument landingPad (exception handling) blocks
-			 * TODO: Handle LandingPad blocks (if possible)
+			 * We will collect the actual trip count and the estimate trip count in every
+			 * basic block that is outside the loop
 			 */
-			if(!CurrentEB->isLandingPad())
-				blocksToInstrument.insert(CurrentEB);
+			std::set<BasicBlock*> blocksToInstrument;
+			SmallVector<BasicBlock*, 2> exitBlocks;
+			loop->getExitBlocks(exitBlocks);
+			for (SmallVectorImpl<BasicBlock*>::iterator eb = exitBlocks.begin(); eb !=  exitBlocks.end(); eb++){
 
+				BasicBlock* CurrentEB = *eb;
+
+				/*
+				 * Does not instrument landingPad (exception handling) blocks
+				 * TODO: Handle LandingPad blocks (if possible)
+				 */
+				if(!CurrentEB->isLandingPad())
+					blocksToInstrument.insert(CurrentEB);
+
+			}
+
+			saveTripCount(blocksToInstrument, tripCount, estimatedTripCount, header, LoopClass);
+
+			NumInstrumentedLoops++;
+
+		} else {
+			NumIgnoredLoops++;
 		}
-
-		saveTripCount(blocksToInstrument, tripCount, estimatedTripCount, header, LoopClass);
-
-		NumInstrumentedLoops++;
-
 	}
 
 	return true;
