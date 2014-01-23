@@ -276,7 +276,6 @@ void Expr::init(Value* V, int level){
 	  Exprs[std::pair<Value*, int>(V,level)] = Expr_;
 
 	  RevExprs[NameStr] = V;
-	  errs() << "Expr: " << NameStr << "	Value: " << *V << " Size:" << RevExprs.size()  << "\n";
 
 	  return;
   }

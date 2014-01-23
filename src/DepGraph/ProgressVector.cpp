@@ -21,9 +21,6 @@ ProgressVector::ProgressVector(std::list<Value*> redefinition) {
 
 		Value* CurrentValue = *it;
 
-		errs() << "Value: " << *CurrentValue << "\n";
-
-
 		Expr CurrentExpr;
 
 		if (first) {
@@ -55,9 +52,6 @@ ProgressVector::ProgressVector(std::list<Value*> redefinition) {
 
 	//Here we compute the delta
 	vecExpr = vecExpr - firstExpr;
-
-	errs() << "Final expr: " << vecExpr << "\n\n";
-
 }
 
 Value* ProgressVector::getUniqueValue(Type* constType) {

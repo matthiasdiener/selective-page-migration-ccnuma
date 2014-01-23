@@ -171,7 +171,7 @@ bool llvm::LoopNormalizer::runOnFunction(Function& F) {
 
 			BasicBlock* predecessor = *pred;
 
-			if (li.getLoopDepth(predecessor) < li.getLoopDepth(header)){
+			if (li.getLoopFor(predecessor) != li.getLoopFor(header)){
 				OutsidePreHeaders.insert(predecessor);
 			}
 

@@ -434,7 +434,6 @@ ProgressVector* TripCountGenerator::generateConstantProgressVector(Value* source
 		bool fail = false;
 
 		if (currentVectorValue) {
-			errs() << "currentVectorValue: " << *currentVectorValue << "\n";
 
 			if (li.getLoopFor(loopHeader)->isLoopInvariant(currentVectorValue)) {
 
@@ -443,12 +442,9 @@ ProgressVector* TripCountGenerator::generateConstantProgressVector(Value* source
 					ProgressVector* tmp = joinVectors(result, currentPathVector);
 
 					if (!tmp) {
-						errs() << "Join Is NUll\n";
 						fail = true;
 					}
 					else {
-						errs() << "Join deu certo!\n";
-
 						if (tmp == result) delete currentPathVector;
 						else delete result;
 
@@ -457,14 +453,11 @@ ProgressVector* TripCountGenerator::generateConstantProgressVector(Value* source
 				}
 
 			} else {
-				errs() << "Is not Loop Invariant\n";
 				fail = true;
 			}
 
 
 		} else {
-			errs() << "currentVectorValue is NULL\n";
-
 			fail = true;
 		}
 
@@ -473,10 +466,6 @@ ProgressVector* TripCountGenerator::generateConstantProgressVector(Value* source
 			delete currentPathVector;
 			if (result) delete result;
 			return NULL;
-		}
-
-		if (result) {
-			errs() << "Result: " << *(result->getUniqueValue(Type::getInt64Ty(*context))) << "\n";
 		}
 
 	}
@@ -785,10 +774,6 @@ BasicBlock* TripCountGenerator::findLoopControllerBlock(Loop* l){
 	SmallVector<BasicBlock*, 2>  exitBlocks;
 	l->getExitingBlocks(exitBlocks);
 
-	if (!exitBlocks.size()) {
-		errs() << "Empty!\n";
-	}
-
 	//Case 1: for/while (the header is an exiting block)
 	for (SmallVectorImpl<BasicBlock*>::iterator It = exitBlocks.begin(), Iend = exitBlocks.end(); It != Iend; It++){
 		BasicBlock* BB = *It;
@@ -997,8 +982,6 @@ void TripCountGenerator::generateVectorEstimatedTripCounts(Function &F){
 			V2 = generateConstantProgressVector(CI->getOperand(1), header);
 
 			if ((!V1) || (!V2)) {
-
-				errs() << "Not V1 or Not V2\n";
 
 				//TODO: Increment a statistic here
 				unknownTC = true;
