@@ -45,6 +45,7 @@ public:
 			innerLoops.push(tmp);
 
 			Loop* l = *(L->begin());
+
 			stackLoop(l);
 		}
 	}
@@ -96,6 +97,10 @@ public:
 			if (inner != tmp.second) {
 				std::pair<Loop::iterator, Loop::iterator> tmp2(inner, tmp.second);
 				innerLoops.push(tmp2);
+
+				//This loop may have nested loops. Push then into the stack
+				Loop* l = *inner;
+				stackLoop(l);
 			}
 
 		} else {
