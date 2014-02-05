@@ -193,8 +193,8 @@ bool SelectivePageMigration::generateCallFor(Loop *L, Instruction *I) {
 
     SCI.Reuse = IRB.CreateAdd(SCI.Reuse, CI.Reuse);
 
-    Calls_.erase(CI);
-    Calls_.insert(CI);
+    Calls_.erase(SCI);
+    Calls_.insert(SCI);
   }
 
   return true;
