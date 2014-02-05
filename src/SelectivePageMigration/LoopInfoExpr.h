@@ -1,5 +1,5 @@
-#ifndef __LOOPINFOEXPR__
-#define __LOOPINFOEXPR__
+#ifndef _LOOPINFOEXPR_H_
+#define _LOOPINFOEXPR_H_
 
 #include "Expr.h"
 #include "PythonInterface.h"

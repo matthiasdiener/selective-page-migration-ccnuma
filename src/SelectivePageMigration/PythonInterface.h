@@ -1,5 +1,5 @@
-#ifndef __PYTHONINTERFACE_H_
-#define __PYTHONINTERFACE_H_
+#ifndef _PYTHONINTERFACE_H_
+#define _PYTHONINTERFACE_H_
 
 #include "Expr.h"
 
