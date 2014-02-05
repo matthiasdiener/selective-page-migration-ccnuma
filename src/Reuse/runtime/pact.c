@@ -1,5 +1,35 @@
 #include <hwloc.h>
+c_topology_t __pact_topo;
+unsigned long __pact_cache_size;
 
+
+inline void __pact_hwloc_init() {
+    hwloc_topology_init(&__pact_topo);
+      hwloc_topology_load(__pact_topo);
+
+        hwloc_obj_t obj;
+          __pact_cache_size = 0;
+
+            for (obj = hwloc_get_obj_by_type(__pact_topo, HWLOC_OBJ_PU, 0); obj; obj = obj->parent) {
+                  if (obj->type == HWLOC_OBJ_CACHE)
+                          __pact_cache_size += obj->attr->cache.size;
+                    }
+}
+
+
+inline void __pact_hwloc_finalize() {
+    hwloc_topology_destroy(__pact_topo);
+}
+
+
+inline void __pact_reuse_add(void *ary, long long start, long long end, long long mem_ac) {
+    hwloc_bitmap_t set = hwloc_bitmap_alloc();
+    hwloc_get_cpubind(__pact_topo, set, HWLOC_CPUBIND_THREAD);
+    hwloc_get_last_cpu_location(__pact_topo, set, HWLOC_CPUBIND_THREAD);
+    hwloc_bitmap_singlify(set);
+    hwloc_set_area_membind ( __pact_topo, (const void*)ary, abs(end-start), (hwloc_const_cpuset_t)set, HWLOC_MEMBIND_BIND, HWLOC_MEMBIND_MIGRATE );
+    hwloc_bitmap_free(set);
+}
 
 hwloc_topology_t __pact_topo;
 unsigned long __pact_cache_size;
