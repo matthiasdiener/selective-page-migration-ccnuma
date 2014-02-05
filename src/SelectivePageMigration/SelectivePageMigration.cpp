@@ -53,6 +53,34 @@ bool SelectivePageMigration::runOnFunction(Function &F) {
   RE_  = &getAnalysis<RelativeExecutions>();
   RMM_ = &getAnalysis<RelativeMinMax>();
 
+  Module_  = F.getParent();
+  Context_ = &Module_->getContext();
+
+  Type        *VoidTy    = Type::getVoidTy(*Context_);
+  IntegerType *IntTy     = IntegerType::getInt64Ty(*Context_);
+  PointerType *IntPtrTy  = PointerType::getUnqual(IntTy);
+  PointerType *VoidPtrTy = PointerType::getInt8PtrTy(*Context_);
+
+  if (F.getName() == "main") {
+    SPM_DEBUG(dbgs() << "SelectivePageMigration: inserting hwloc calls into "
+                        "main function\n");
+
+    FunctionType *FnType = FunctionType::get(VoidTy, ArrayRef<Type*>(), false);
+    IRBuilder<> IRB(&(*F.getEntryBlock().begin()));
+
+    Constant *Init = Module_->getOrInsertFunction("__spm_init", FnType);
+    IRB.CreateCall(Init);
+
+    Constant *End = Module_->getOrInsertFunction("__spm_end", FnType);
+    for (auto &BB : F) {
+      TerminatorInst *TI = BB.getTerminator();
+      if (isa<ReturnInst>(TI)) {
+        IRB.SetInsertPoint(TI);
+        IRB.CreateCall(End);
+      }
+    }
+  }
+
   if (!ClFunc.empty() && F.getName() != ClFunc) {
     SPM_DEBUG(dbgs() << "SelectivePageMigration: skipping function "
                      << F.getName() << "\n");
@@ -62,20 +90,12 @@ bool SelectivePageMigration::runOnFunction(Function &F) {
   SPM_DEBUG(dbgs() << "SelectivePageMigration: processing function "
                    << F.getName() << "\n");
 
-  Module_  = F.getParent();
-  Context_ = &Module_->getContext();
-
-  Type        *VoidTy    = Type::getVoidTy(*Context_);
-  IntegerType *IntTy     = IntegerType::getInt64Ty(*Context_);
-  PointerType *IntPtrTy  = PointerType::getUnqual(IntTy);
-  PointerType *VoidPtrTy = PointerType::getInt8PtrTy(*Context_);
-
   std::vector<Type*> ReuseFnFormals = { VoidPtrTy, IntTy, IntTy, IntTy };
   FunctionType *ReuseFnType = FunctionType::get(VoidTy, ReuseFnFormals, false);
   ReuseFn_ =
-    F.getParent()->getOrInsertFunction("__pact_spm_add", ReuseFnType);
+    F.getParent()->getOrInsertFunction("__spm_get", ReuseFnType);
   ReuseFnDestroy_ =
-    F.getParent()->getOrInsertFunction("__pact_spm_destroy", ReuseFnType);
+    F.getParent()->getOrInsertFunction("__spm_give", ReuseFnType);
 
   std::set<BasicBlock*> Processed;
   auto Entry = DT_->getRootNode();
