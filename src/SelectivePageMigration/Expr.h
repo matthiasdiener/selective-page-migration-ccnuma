@@ -108,16 +108,20 @@ public:
   long   getRationalNumer() const;
   long   getRationalDenom() const;
 
-  Value *getSymbolValue() const;
-  Value *getValue(IntegerType *Ty, IRBuilder<> &IRB) const;
-  Value *getValue(unsigned BitWidth, LLVMContext &C, IRBuilder<> &IRB) const;
-
   string getSymbolString() const;
 
   vector<Expr> getSymbols() const;
 
   Expr getPowBase() const;
   Expr getPowExp()  const;
+
+  Value *getSymbolValue() const;
+
+  Value *getValue(IntegerType *Ty, IRBuilder<> &IRB) const;
+  Value *getValue(unsigned BitWidth, LLVMContext &C, IRBuilder<> &IRB) const;
+
+  Value *getExprValue(IntegerType *Ty, IRBuilder<> &IRB, Module *M)   const;
+  Value *getExprValue(unsigned BitWidth, IRBuilder<> &IRB, Module *M) const;
 
   bool eq        (const Expr& Other) const;
   bool ne        (const Expr& Other) const;

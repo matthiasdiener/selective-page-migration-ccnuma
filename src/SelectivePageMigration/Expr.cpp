@@ -5,6 +5,8 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -13,10 +15,20 @@
 #include <sstream>
 #include <unordered_map>
 
+using namespace llvm;
+
 /* ************************************************************************** */
 /* ************************************************************************** */
 
-using namespace llvm;
+static cl::opt<bool>
+  ClDebug("expr-debug",
+          cl::desc("Enable debugging for value-generating functions"),
+          cl::Hidden, cl::init(false));
+
+#define EXPR_DEBUG(X) { if (ClDebug) { X; } }
+
+/* ************************************************************************** */
+/* ************************************************************************** */
 
 raw_ostream& operator<<(raw_ostream& OS, const GiNaC::ex &E) {
   std::ostringstream Str;
@@ -201,6 +213,30 @@ long Expr::getRationalDenom() const {
   return GiNaC::ex_to<GiNaC::numeric>(Expr_).denom().to_long();
 }
 
+string Expr::getSymbolString() const {
+  std::ostringstream Str;
+  Str << Expr_;
+  return Str.str();
+}
+
+vector<Expr> Expr::getSymbols() const {
+  vector<Expr> Symbols;
+  for (auto Ex = preorder_begin(), E = preorder_end(); Ex != E; ++Ex)
+    if ((*Ex).isSymbol())
+      Symbols.push_back(*Ex);
+  return Symbols;
+}
+
+Expr Expr::getPowBase() const {
+  assert(isPow() && "Expected power expression");
+  return at(0);
+}
+
+Expr Expr::getPowExp() const {
+  assert(isPow() && "Expected power expression");
+  return at(1);
+}
+
 Value *Expr::getSymbolValue() const {
   return Values[GiNaC::ex_to<GiNaC::symbol>(Expr_).get_name()];
 }
@@ -234,28 +270,87 @@ Value *Expr::getValue(unsigned BitWidth, LLVMContext &C,
   return getValue(IntegerType::get(C, BitWidth), IRB);
 }
 
-string Expr::getSymbolString() const {
-  std::ostringstream Str;
-  Str << Expr_;
-  return Str.str();
+Value *Expr::getExprValue(unsigned BitWidth, IRBuilder<> &IRB,
+                          Module *M) const {
+  IntegerType *Ty = IntegerType::get(M->getContext(), BitWidth);
+  return getExprValue(Ty, IRB, M);
 }
 
-vector<Expr> Expr::getSymbols() const {
-  vector<Expr> Symbols;
-  for (auto Ex = preorder_begin(), E = preorder_end(); Ex != E; ++Ex)
-    if ((*Ex).isSymbol())
-      Symbols.push_back(*Ex);
-  return Symbols;
-}
+Value *Expr::getExprValue(IntegerType *Ty, IRBuilder<> &IRB, Module *M) const {
+  LLVMContext &C = M->getContext();
+  // Stop recursion when the expression is a single atom - a symbol or a
+  // constant.
+  if (isSymbol() || isConstant()) {
+    Value *V = getValue(Ty, IRB);
+    EXPR_DEBUG(dbgs() << "SelectivePageMigration: value for " << Expr_
+                      << " is: " << *V << "\n");
+    return V;
+  } else if (isPow()) {
+    Value *Base = getPowBase().getExprValue(Ty, IRB, M);
+    Value *Exp  = getPowExp().getExprValue(Ty, IRB, M);
 
-Expr Expr::getPowBase() const {
-  assert(isPow() && "Expected power expression");
-  return at(0);
-}
+    Type  *DoubleTy   = Type::getDoubleTy(C);
+    Value *BaseDouble = IRB.CreateSIToFP(Base, DoubleTy);
+    Value *ExpDouble  = IRB.CreateSIToFP(Exp,  DoubleTy);
 
-Expr Expr::getPowExp() const {
-  assert(isPow() && "Expected power expression");
-  return at(1);
+    Function *PowFn = Intrinsic::getDeclaration(M, Intrinsic::pow,
+                                                ArrayRef<Type*>(DoubleTy));
+    Value *Pow = IRB.CreateCall2(PowFn, BaseDouble, ExpDouble);
+    Value *Cast = IRB.CreateFPToSI(Pow, Base->getType());
+    EXPR_DEBUG(dbgs() << "SelectivePageMigration: value for " << Expr_
+                      << " is: " << *Cast << "\n");
+    return Cast;
+  } else if (isAdd() || isMul()) {
+    bool IsAdd = isAdd(), IsMul = isMul();
+    // The accumulator will keep track of the last generated expression, to be
+    // used in the next iteration.
+    Value *Acc = nullptr;
+    for (auto SubEx : (Expr)*this) {
+      // Rationals should generate an sdiv/udiv instruction in multiplications.
+      if (IsMul) {
+        if (!SubEx.isInteger() && SubEx.isRational()) {
+          APInt Int;
+          
+          Int = APInt(Ty->getBitWidth(), SubEx.getRationalNumer(), true);
+          Constant *Numer = Constant::getIntegerValue(Ty, Int);
+          Acc = Acc ? IRB.CreateMul(Acc, Numer) : Numer;
+
+          Int = APInt(Ty->getBitWidth(), SubEx.getRationalDenom(), true);
+          Constant *Denom = Constant::getIntegerValue(Ty, Int);
+          Acc = IRB.CreateSDiv(Acc, Denom);
+
+          continue;
+        }
+      }
+
+      Value *Curr = SubEx.getExprValue(Ty, IRB, M);
+      Acc = Acc ? IsAdd ? IRB.CreateAdd(Acc, Curr) : IRB.CreateMul(Acc, Curr)
+                : Curr;
+    }
+    EXPR_DEBUG(dbgs() << "SelectivePageMigration: value for " << Expr_
+                      << " is: " << *Acc << "\n");
+    return Acc;
+  } else if (isMin()) {
+    Value *Left  = at(0).getExprValue(Ty, IRB, M);
+    Value *Right = at(1).getExprValue(Ty, IRB, M);
+    Value *Cmp = IRB.CreateICmp(CmpInst::ICMP_SLT, Left, Right);
+    Value *Ret = IRB.CreateSelect(Cmp, Left, Right);
+    EXPR_DEBUG(dbgs() << "SelectivePageMigration: value for " << Expr_
+                      << " is: " << *Ret << "\n");
+    return Ret;
+  } else if (isMax()) {
+    Value *Left  = at(0).getExprValue(Ty, IRB, M);
+    Value *Right = at(1).getExprValue(Ty, IRB, M);
+    Value *Cmp = IRB.CreateICmp(CmpInst::ICMP_SGT, Left, Right);
+    Value *Ret = IRB.CreateSelect(Cmp, Left, Right);
+    EXPR_DEBUG(dbgs() << "SelectivePageMigration: value for " << Expr_
+                      << " is: " << *Ret << "\n");
+    return Ret;
+  } else {
+    EXPR_DEBUG(dbgs() << "SelectivePageMigration: unhandled expression: "
+                      << Expr_ << "\n");
+    return nullptr;
+  }
 }
 
 bool Expr::eq(const Expr& Other) const {
