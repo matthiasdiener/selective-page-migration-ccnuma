@@ -1,12 +1,13 @@
 -- Prerequisites --
-1) Download and install the latest version of SymPy from
+1) Use an RTTI-enabled build of LLVM (build with REQUIRES_RTTI=1).
+2) Download and install the latest version of SymPy from
    git://github.com/sympy/sympy.git (requires Python 2.7).
    Add the lib.*/ directory from the SymPy build to your PYTHONPATH.
-2) Download and install GiNaC 1.6.2 from
+3) Download and install GiNaC 1.6.2 from
    ftp://ftpthep.physik.uni-mainz.de/pub/GiNaC/ginac-1.6.2.tar.bz2 and apply the
    patch ginac.diff from the SPM repository. Add GiNaC's <build>/lib/ directory
    to your LD_LIBRARY_PATH.
-3) Download and install hwloc from
+4) Download and install hwloc from
    http://www.open-mpi.org/software/hwloc/v1.8/downloads/hwloc-1.8.1.tar.gz.
    Add hwloc's <build>/lib/ directory to your LD_LIBRARY_PATH.
 
