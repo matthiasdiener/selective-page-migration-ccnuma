@@ -179,6 +179,20 @@ bool SelectivePageMigration::generateCallFor(Loop *L, Instruction *I) {
                    << L->getHeader()->getName() << " relative to "
                    << Final->getHeader()->getName() << ": " << ReuseEx << "\n");
 
+  BasicBlock *Preheader = Final->getLoopPreheader();
+  BasicBlock *Exit      = Final->getExitBlock();
+
+  // FIXME: instead of bailing, we should set the toplevel loop in the call to
+  // getExecutionsRelativeTo.
+  if (Instruction *AI = dyn_cast<Instruction>(Array)) {
+    if (!DT_->dominates(AI->getParent(), Preheader) ||
+         AI->getParent() == Preheader) {
+      SPM_DEBUG(dbgs() << "SelectivePageMigration: array does not dominate "
+                          "loop preheader\n");
+      return false;
+    }
+  }
+
   Expr MinEx, MaxEx;
   if (!RMM_->getMinMax(Subscript, MinEx, MaxEx)) {
     SPM_DEBUG(dbgs() << "SelectivePageMigration: could calculate min/max for "
@@ -195,9 +209,6 @@ bool SelectivePageMigration::generateCallFor(Loop *L, Instruction *I) {
 
   SPM_DEBUG(dbgs() << "SelectivePageMigration: values for reuse, min, max: "
                    << *Reuse << ", " << *Min << ", " << *Max << "\n");
-
-  BasicBlock *Preheader = Final->getLoopPreheader();
-  BasicBlock *Exit      = Final->getExitBlock();
 
   CallInfo CI = { Preheader, Exit, Array, Min, Max, Reuse };
   auto Call = Calls_.insert(CI);
