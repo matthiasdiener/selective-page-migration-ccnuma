@@ -159,7 +159,7 @@ public:
                       PyObject *Lower, PyObject *Upper);
 
 private:
-  PythonInterface *PyInterface_;
+  PythonInterface *PI_;
   PythonObjVec *ObjVec_;
 };
 

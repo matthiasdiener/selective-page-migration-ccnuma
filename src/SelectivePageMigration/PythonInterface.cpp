@@ -201,9 +201,9 @@ PyObject *PythonInterface::callSelf(const char *Fn, PyObject *Self,
 }
 
 bool SymPyInterface::runOnModule(Module&) {
-  PI__ = &getAnalysis<PythonInterface>();
+  PI_ = &getAnalysis<PythonInterface>();
 
-  ObjVec_ = PI__->createObjVec(getObjVecInit());
+  ObjVec_ = PI_->createObjVec(getObjVecInit());
   assert(ObjVec_);
 
   return false;
@@ -257,32 +257,32 @@ Expr SymPyInterface::conv(PyObject *Obj) {
     return Expr(PyLong_AsLong(Obj));
   } else if (PyType_IsSubtype(Obj->ob_type,
                               (PyTypeObject*)ObjVec_->getObj(CLS_SYMBOL))) {
-    PyObject *Name = PI__->getAttr(Obj, "name");
+    PyObject *Name = PI_->getAttr(Obj, "name");
     auto Ret = PyString_AsString(Name);
     Py_DecRef(Name);
     return Expr(std::string(Ret));
   } else if (PyType_IsSubtype(Obj->ob_type,
                               (PyTypeObject*)ObjVec_->getObj(CLS_INTEGER))) {
-    PyObject *Val = PI__->callSelf("__int__", Obj, {});
+    PyObject *Val = PI_->callSelf("__int__", Obj, {});
     auto Ret = PyLong_AsLong(Val);
     Py_DecRef(Val);
     return Ret;
   } else if (PyType_IsSubtype(Obj->ob_type,
                               (PyTypeObject*)ObjVec_->getObj(CLS_RATIONAL))) {
-    PyObject *Val = PI__->callSelf("as_numer_denom", Obj, {});
+    PyObject *Val = PI_->callSelf("as_numer_denom", Obj, {});
     auto Ret = Expr(PyLong_AsLong(PyTuple_GetItem(Val, 0)),
                     PyLong_AsLong(PyTuple_GetItem(Val, 1)));
     Py_DecRef(Val);
     return Ret;
   } else if (PyType_IsSubtype(Obj->ob_type,
                               (PyTypeObject*)ObjVec_->getObj(CLS_FLOAT))) {
-    PyObject *Val = PI__->callSelf("__float__", Obj, {});
+    PyObject *Val = PI_->callSelf("__float__", Obj, {});
     auto Ret = PyFloat_AsDouble(Val);
     Py_DecRef(Val);
     return Ret;
   }
 
-  PyObject *Args = PI__->getAttr(Obj, "args");
+  PyObject *Args = PI_->getAttr(Obj, "args");
   assert(Args);
 
   std::vector<Expr> Exprs;
@@ -313,7 +313,7 @@ PyObject *SymPyInterface::var(unsigned Val) {
 }
 
 PyObject *SymPyInterface::var(const char *Str) {
-  return PI__->call(ObjVec_, CLS_SYMBOL, {PyString_FromString(Str)});
+  return PI_->call(ObjVec_, CLS_SYMBOL, {PyString_FromString(Str)});
 }
 
 PyObject *SymPyInterface::getInteger(long Val) {
@@ -325,22 +325,22 @@ PyObject *SymPyInterface::getFloat(double Val) {
 }
 
 PyObject *SymPyInterface::getRational(long Numer, long Denom) {
-  return PI__->call(ObjVec_, CLS_RATIONAL, {PyLong_FromLong(Numer),
+  return PI_->call(ObjVec_, CLS_RATIONAL, {PyLong_FromLong(Numer),
                             PyLong_FromLong(Denom)});
 }
 
 PyObject *SymPyInterface::callBinOp(PyObject *Fn, PyObject *LHS,
                                     PyObject *RHS) {
   if (PyType_IsSubtype(LHS->ob_type, (PyTypeObject*)ObjVec_->getObj(CLS_EXPR)))
-    return PI__->callSelf(Fn, LHS, {RHS});
-  return PI__->callSelf(Fn, RHS, {LHS});
+    return PI_->callSelf(Fn, LHS, {RHS});
+  return PI_->callSelf(Fn, RHS, {LHS});
 }
 
 PyObject *SymPyInterface::callBinOp(const char *Fn, PyObject *LHS,
                                     PyObject *RHS) {
   if (PyType_IsSubtype(LHS->ob_type, (PyTypeObject*)ObjVec_->getObj(CLS_EXPR)))
-    return PI__->callSelf(Fn, LHS, {RHS});
-  return PI__->callSelf(Fn, RHS, {LHS});
+    return PI_->callSelf(Fn, LHS, {RHS});
+  return PI_->callSelf(Fn, RHS, {LHS});
 }
 
 PyObject *SymPyInterface::add(PyObject *LHS, PyObject *RHS) {
@@ -364,25 +364,25 @@ PyObject *SymPyInterface::pow(PyObject *Base, PyObject *Exp) {
 }
 
 PyObject *SymPyInterface::min(PyObject *First, PyObject *Second) {
-  return PI__->call(ObjVec_, FN_MIN, {First, Second});
+  return PI_->call(ObjVec_, FN_MIN, {First, Second});
 }
 
 PyObject *SymPyInterface::max(PyObject *First, PyObject *Second) {
-  return PI__->call(ObjVec_, FN_MAX, {First, Second});
+  return PI_->call(ObjVec_, FN_MAX, {First, Second});
 }
 
 PyObject *SymPyInterface::inverse(PyObject *Obj) {
-  return PI__->call(ObjVec_, CLS_RATIONAL, {PyLong_FromLong(1), Obj});
+  return PI_->call(ObjVec_, CLS_RATIONAL, {PyLong_FromLong(1), Obj});
 }
 
 PyObject *SymPyInterface::expand(PyObject *Obj) {
-  return PI__->callSelf("expand", Obj, {});
+  return PI_->callSelf("expand", Obj, {});
 }
 
 PyObject *SymPyInterface::summation(PyObject *Expr, PyObject *Var,
                                     PyObject *Lower, PyObject *Upper) {
-  PyObject *Tuple = PI__->createTuple({Var, Lower, Upper});
-  PyObject *Ret = PI__->call(ObjVec_, FN_SUMMATION, {Expr, Tuple});
+  PyObject *Tuple = PI_->createTuple({Var, Lower, Upper});
+  PyObject *Ret = PI_->call(ObjVec_, FN_SUMMATION, {Expr, Tuple});
   Py_DecRef(Tuple);
   return Ret;
 }
