@@ -103,9 +103,16 @@ Expr LoopInfoExpr::getExpr(Value *V) {
 bool LoopInfoExpr::
       getLoopInfo(Loop *L, PHINode *&Indvar, Expr &IndvarStart,
                   Expr &IndvarEnd, Expr &IndvarStep) {
-  BranchInst *BI = cast<BranchInst>(L->getExitingBlock()->getTerminator());
-  ICmpInst *ICI = dyn_cast<ICmpInst>(BI->getCondition());
+  BasicBlock *Exit = L->getExitingBlock();
+  if (!Exit)
+    return false;
 
+  TerminatorInst *TI = L->getExitingBlock()->getTerminator();
+  BranchInst *BI = dyn_cast<BranchInst>(TI);
+  if (!BI)
+    return false;
+
+  ICmpInst *ICI = dyn_cast<ICmpInst>(BI->getCondition());
   if (!ICI)
     return false;
 
