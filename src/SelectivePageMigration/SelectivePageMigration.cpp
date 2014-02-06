@@ -87,6 +87,8 @@ bool SelectivePageMigration::runOnFunction(Function &F) {
     return false;
   }
 
+  Calls_.clear();
+
   SPM_DEBUG(dbgs() << "SelectivePageMigration: processing function "
                    << F.getName() << "\n");
 
