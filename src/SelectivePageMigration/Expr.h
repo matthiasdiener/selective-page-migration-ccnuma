@@ -104,7 +104,6 @@ public:
 
   long   getInteger()       const;
   double getFloat()         const;
-  double getRational()      const;
   long   getRationalNumer() const;
   long   getRationalDenom() const;
 

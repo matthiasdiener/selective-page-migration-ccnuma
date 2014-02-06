@@ -247,10 +247,7 @@ Value *Expr::getValue(IntegerType *Ty,
   if (isInteger()) {
     APInt Int(Ty->getBitWidth(), getInteger(), true);
     return Constant::getIntegerValue(Ty, Int);
-  } else if (isRational()) {
-    APInt Int(Ty->getBitWidth(), (long)getRational(), true);
-    return Constant::getIntegerValue(Ty, Int);
-  } else if (isFloat()) {
+  } else if (isRational() || isFloat()) {
     APInt Int(Ty->getBitWidth(), (long)getFloat(), true);
     return Constant::getIntegerValue(Ty, Int);
   } else if (isSymbol()) {
