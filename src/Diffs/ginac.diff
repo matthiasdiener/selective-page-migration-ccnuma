@@ -1,0 +1,303 @@
+--- ginac/add.cpp	2011-06-21 16:28:16.000000000 -0300
++++ ../ginac-1.6.2/ginac/add.cpp	2014-01-20 15:39:39.307603649 -0200
+@@ -30,6 +30,8 @@
+ #include "ncmul.h"
+ #include "compiler.h"
+ 
++#include "function.h"
++
+ #include <iostream>
+ #include <limits>
+ #include <stdexcept>
+@@ -343,6 +345,51 @@ ex add::coeff(const ex & s, int n) const
+  *  @param level cut-off in recursive evaluation */
+ ex add::eval(int level) const
+ {
++  // Handle undefined values.
++	for (epvector::const_iterator i = seq.begin(), end = seq.end();
++       i != end; ++i)
++    if (is_a<symbol>(i->rest) &&
++        ex_to<symbol>(i->rest).get_name() == "undefined")
++      return i->rest;
++
++  // Handle infinity values.
++  bool has_plus_inf = false, has_minus_inf = false;
++	epvector::const_iterator plus_inf = seq.end(), minus_inf = seq.end();
++	for (epvector::const_iterator i = seq.begin(), end = seq.end();
++       i != end; ++i) {
++    if (!is_a<function>(i->rest))
++      continue;
++    if (ex_to<function>(i->rest).get_name() == "inf") {
++      if (ex_to<numeric>(i->rest.op(0)).is_positive()) {
++        if (ex_to<numeric>(i->coeff).is_positive()) {
++          plus_inf = i;
++          if (minus_inf != seq.end())
++            return symbol("undefined");
++        } else {
++          minus_inf = i;
++          if (plus_inf != seq.end())
++            return symbol("undefined");
++        }
++      } else {
++        if (ex_to<numeric>(i->coeff).is_positive()) {
++          minus_inf = i;
++          if (plus_inf != seq.end())
++            return symbol("undefined");
++        } else {
++          plus_inf = i;
++          if (minus_inf != seq.end())
++            return symbol("undefined");
++        }
++      }
++    }
++  }
++
++  if (plus_inf != seq.end()) {
++    return plus_inf->rest;
++  } else if (minus_inf != seq.end()) {
++    return minus_inf->rest;
++  }
++
+ 	std::auto_ptr<epvector> evaled_seqp = evalchildren(level);
+ 	if (evaled_seqp.get()) {
+ 		// do more evaluation later
+--- ginac/inifcns.cpp	2011-05-10 17:22:53.000000000 -0300
++++ ../ginac-1.6.2/ginac/inifcns.cpp	2014-02-05 19:57:00.651975185 -0200
+@@ -39,6 +39,10 @@
+ 
+ namespace GiNaC {
+ 
++GiNaC::symbol undefined() {
++  return symbol("undefined");
++}
++
+ //////////
+ // complex conjugate
+ //////////
+@@ -879,6 +883,130 @@ REGISTER_FUNCTION(Order, eval_func(Order
+                          real_part_func(Order_real_part).
+                          imag_part_func(Order_imag_part));
+ 
++static ex min_eval(const ex & nx, const ex & ny)
++{
++  ex x = nx.eval();
++  ex y = ny.eval();
++
++  if (is_a<symbol>(x) && ex_to<symbol>(x).get_name() == "undefined")
++    return x;
++  if (is_a<symbol>(y) && ex_to<symbol>(y).get_name() == "undefined")
++    return y;
++
++  bool is_fn_x = is_exactly_a<function>(x),
++       is_fn_y = is_exactly_a<function>(y);
++  bool is_inf_x = is_fn_x && ex_to<function>(x).get_name() == "inf",
++       is_inf_y = is_fn_y && ex_to<function>(y).get_name() == "inf";
++
++  if (is_inf_x) {
++    if (x.op(0) == numeric(1))
++      return y;
++    if (x.op(0) == numeric(-1))
++      return x;
++  }
++
++  if (is_inf_y) {
++    if (y.op(0) == numeric(1))
++      return x;
++    if (y.op(0) == numeric(-1))
++      return y;
++  }
++
++  ex s = x - y;
++  if (is_exactly_a<numeric>(s)) {
++    if (ex_to<numeric>(s).is_positive())
++      return y;
++    else
++      return x;
++  }
++
++  if (is_exactly_a<numeric>(x)) {
++    ex s = x - y;
++    if (is_exactly_a<numeric>(s))
++      if (!ex_to<numeric>(s).is_negative())
++        return y;
++  }
++
++  if (is_exactly_a<numeric>(y)) {
++    ex s = y - x;
++    if (is_exactly_a<numeric>(s))
++      if (!ex_to<numeric>(s).is_negative())
++        return x;
++  }
++
++  return min(x, y).hold();
++}
++
++REGISTER_FUNCTION(min, eval_func(min_eval).
++                       latex_name("\\min"));
++
++static ex max_eval(const ex & nx, const ex & ny)
++{
++  ex x = nx.eval();
++  ex y = ny.eval();
++
++  if (is_a<symbol>(x) && ex_to<symbol>(x).get_name() == "undefined")
++    return x;
++  if (is_a<symbol>(y) && ex_to<symbol>(y).get_name() == "undefined")
++    return y;
++
++  bool is_fn_x = is_exactly_a<function>(x),
++       is_fn_y = is_exactly_a<function>(y);
++  bool is_inf_x = is_fn_x && ex_to<function>(x).get_name() == "inf",
++       is_inf_y = is_fn_y && ex_to<function>(y).get_name() == "inf";
++
++  if (is_inf_x) {
++    if (x.op(0) == numeric(1))
++      return x;
++    if (x.op(0) == numeric(-1))
++      return y;
++  }
++
++  if (is_inf_y) {
++    if (y.op(0) == numeric(1))
++      return y;
++    if (y.op(0) == numeric(-1))
++      return x;
++  }
++
++  ex s = x - y;
++  if (is_exactly_a<numeric>(s)) {
++    if (ex_to<numeric>(s).is_positive())
++      return x;
++    else
++      return y;
++  }
++
++  if (is_exactly_a<numeric>(x)) {
++    ex s = x - y;
++    if (is_exactly_a<numeric>(s))
++      if (!ex_to<numeric>(s).is_positive())
++        return y;
++  }
++
++  if (is_exactly_a<numeric>(y)) {
++    ex s = y - x;
++    if (is_exactly_a<numeric>(s))
++      if (!ex_to<numeric>(s).is_positive())
++        return x;
++  }
++
++  return max(x, y).hold();
++}
++
++REGISTER_FUNCTION(max, eval_func(max_eval).
++                       latex_name("\\max"));
++
++static ex inf_eval(const ex & x)
++{
++  if (!is_a<numeric>(x))
++    return symbol("undefined");
++  return inf(numeric(ex_to<numeric>(x).is_positive() ? 1 : -1)).hold();
++}
++
++REGISTER_FUNCTION(inf, eval_func(inf_eval).
++                       latex_name("\\inf"));
++
+ //////////
+ // Solve linear system
+ //////////
+--- ginac/inifcns.h	2011-05-10 17:22:53.000000000 -0300
++++ ../ginac-1.6.2/ginac/inifcns.h	2014-02-05 19:56:54.067907180 -0200
+@@ -29,6 +29,8 @@
+ 
+ namespace GiNaC {
+ 
++GiNaC::symbol undefined();
++
+ /** Complex conjugate. */
+ DECLARE_FUNCTION_1P(conjugate_function)
+ 
+@@ -186,6 +188,13 @@ DECLARE_FUNCTION_2P(binomial)
+ /** Order term function (for truncated power series). */
+ DECLARE_FUNCTION_1P(Order)
+ 
++/** Minumum and maximum of two expressions. **/
++DECLARE_FUNCTION_2P(min)
++DECLARE_FUNCTION_2P(max)
++
++/** Plus and minus infinity. **/
++DECLARE_FUNCTION_1P(inf)
++
+ ex lsolve(const ex &eqns, const ex &symbols, unsigned options = solve_algo::automatic);
+ 
+ /** Find a real root of real-valued function f(x) numerically within a given
+--- ginac/mul.cpp	2011-06-21 16:28:16.000000000 -0300
++++ ../ginac-1.6.2/ginac/mul.cpp	2014-01-20 15:40:46.940236290 -0200
+@@ -32,6 +32,9 @@
+ #include "symbol.h"
+ #include "compiler.h"
+ 
++#include "inifcns.h"
++#include "function.h"
++
+ #include <iostream>
+ #include <limits>
+ #include <stdexcept>
+@@ -441,6 +444,58 @@ ex mul::coeff(const ex & s, int n) const
+  *  @param level cut-off in recursive evaluation */
+ ex mul::eval(int level) const
+ {
++  // Handles undefined values.
++	for (epvector::const_iterator i = seq.begin(), end = seq.end();
++       i != end; ++i)
++    if (is_a<symbol>(i->rest) &&
++        ex_to<symbol>(i->rest).get_name() == "undefined")
++      return i->rest;
++
++  // TODO:
++  // Handle division by infinity values.
++  // The coeff of each value in seq is the power to which the value is
++  // raised.
++  bool has_plus_inf = false, has_minus_inf = false;
++	for (epvector::const_iterator i = seq.begin(), end = seq.end();
++       i != end; ++i) {
++    if (!is_a<function>(i->rest))
++      continue;
++    if (ex_to<function>(i->rest).get_name() == "inf") {
++      if (ex_to<numeric>(i->rest.op(0)).is_zero() ||
++          ex_to<numeric>(overall_coeff).is_zero())
++        return symbol("undefined");
++      if (ex_to<numeric>(i->rest.op(0)).is_positive()) {
++        if (ex_to<numeric>(i->coeff).is_positive() !=
++            ex_to<numeric>(overall_coeff).is_positive()) {
++          has_minus_inf = true;
++          if (has_plus_inf)
++            return symbol("undefined");
++        } else {
++          has_plus_inf = true;
++          if (has_minus_inf)
++            return symbol("undefined");
++        }
++      } else {
++        if (ex_to<numeric>(i->coeff).is_positive() !=
++            ex_to<numeric>(overall_coeff).is_positive()) {
++          has_plus_inf = true;
++          if (has_minus_inf)
++            return symbol("undefined");
++        } else {
++          has_minus_inf = true;
++          if (has_plus_inf)
++            return symbol("undefined");
++        }
++      }
++    }
++  }
++
++  if (has_plus_inf) {
++    return inf(numeric(1));
++  } else if (has_minus_inf) {
++    return inf(numeric(-1));
++  }
++
+ 	std::auto_ptr<epvector> evaled_seqp = evalchildren(level);
+ 	if (evaled_seqp.get()) {
+ 		// do more evaluation later
