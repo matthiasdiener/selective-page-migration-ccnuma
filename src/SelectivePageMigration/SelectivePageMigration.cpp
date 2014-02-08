@@ -187,8 +187,8 @@ bool SelectivePageMigration::generateCallFor(Loop *L, Instruction *I) {
   // FIXME: instead of bailing, we should set the toplevel loop in the call to
   // getExecutionsRelativeTo.
   if (Instruction *AI = dyn_cast<Instruction>(Array)) {
-    if (!DT_->dominates(AI->getParent(), Preheader) ||
-         AI->getParent() == Preheader) {
+    if (!DT_->dominates(AI->getParent(), Preheader) &&
+         AI->getParent() != Preheader) {
       SPM_DEBUG(dbgs() << "SelectivePageMigration: array does not dominate "
                           "loop preheader\n");
       return false;
