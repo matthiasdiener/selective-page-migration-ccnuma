@@ -52,11 +52,13 @@ ProgressVector::ProgressVector(std::list<Value*> redefinition) {
 
 	//Here we compute the delta
 	vecExpr = vecExpr - firstExpr;
+
 }
 
 Value* ProgressVector::getUniqueValue(Type* constType) {
 
 	if (vecExpr.isNumber()) {
+
 		return ConstantInt::get(constType, vecExpr.getNumber());
 	}
 

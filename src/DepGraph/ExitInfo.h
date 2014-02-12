@@ -19,6 +19,15 @@
 
 namespace llvm {
 
+	/*
+	 * The class ExitInfo collects the instructions that make the program
+	 * to stop (in normal circunstances; does not apply to exceptions raised
+	 * by the OS).
+	 *
+	 * Those instructions are :
+	 * 		- calls to exit or abort
+	 * 		- return instruction in the main function
+	 */
 	class ExitInfo: public ModulePass {
 	public:
 		static char ID;

@@ -9,10 +9,84 @@
 
 void LoopControllersDepGraph::getAnalysisUsage(AnalysisUsage &AU) const{
 	AU.addRequired<functionDepGraph> ();
-	AU.addRequired<LoopInfoEx> ();
+	AU.addRequiredTransitive<LoopInfoEx> ();
+	AU.addRequiredTransitive<DominatorTree> ();
     AU.setPreservesAll();
 }
 
+void LoopControllersDepGraph::freePerspectiveGraph(){
+
+	if (depGraph != fullGraph) {
+		//depGraph is a modified clone. Free that memory
+		delete depGraph;
+	}
+
+}
+
+void LoopControllersDepGraph::setPerspective(BasicBlock* LoopHeader){
+
+	freePerspectiveGraph();
+
+	if (!LoopHeader) {
+		//Return to the full perspective
+		depGraph = fullGraph;
+	} else {
+
+		/*
+		 * Perspective: Given a natural loop L, a perspective LoopControllersDepGraph of L
+		 * will be composed only by instructions that:
+		 *
+		 * - belongs to L
+		 * or
+		 * - belongs to a loop nested in L
+		 * or
+		 * - dominates L's header block
+		 *
+		 */
+
+
+		LoopInfoEx& li = getAnalysis<LoopInfoEx>();
+		Loop* L = li.getLoopFor(LoopHeader);
+		std::set<Loop*> nestedLoops = li.getNestedLoops(L);
+		nestedLoops.insert(L);
+
+		DominatorTree& dt = getAnalysis<DominatorTree>();
+
+		depGraph = fullGraph->clone();
+
+		std::set<GraphNode*> nodesToRemove;
+		for(Graph::iterator it = depGraph->begin(), iEnd = depGraph->end(); it != iEnd; it++){
+
+			GraphNode* node = *it;
+
+			Value* v = NULL;
+
+			if (VarNode *VN = dyn_cast<VarNode>(node))
+				v = VN->getValue();
+			else if (OpNode* ON = dyn_cast<OpNode>(node)){
+				v = ON->getValue();
+			}
+
+			if(v){
+				if(Instruction* I = dyn_cast<Instruction>(v)) {
+
+					Loop* currentLoop = li.getLoopFor(I->getParent());
+					if(!nestedLoops.count(currentLoop)) {
+
+						if (!dt.dominates(I,LoopHeader)){
+							nodesToRemove.insert(node);
+						}
+					}
+				}
+			}
+		}
+
+	    for(std::set<GraphNode*>::iterator node = nodesToRemove.begin(); node != nodesToRemove.end(); node++ ){
+	    	depGraph->removeNode(*node);
+	    }
+	}
+
+}
 
 bool LoopControllersDepGraph::runOnFunction(Function& F){
     //Step 1: Get the complete dependence graph
@@ -68,6 +142,7 @@ bool LoopControllersDepGraph::runOnFunction(Function& F){
     }
 
     //Step 5: ta-da! The graph is ready to use :)
+    fullGraph = depGraph;
 
     return false;
 }
@@ -88,6 +163,10 @@ void ModuleLoopControllersDepGraph::getAnalysisUsage(AnalysisUsage &AU) const{
     AU.setPreservesAll();
 }
 
+void ModuleLoopControllersDepGraph::setPerspective(BasicBlock* LoopHeader){
+	//TODO: Implement this
+	assert(false && "Method ModuleLoopControllersDepGraph::setPerspective not implemented yet");
+}
 
 bool ModuleLoopControllersDepGraph::runOnModule(Module& M){
     //Step 1: Get the complete dependence graph

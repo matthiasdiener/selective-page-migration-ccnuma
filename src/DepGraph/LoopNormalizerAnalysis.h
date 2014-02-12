@@ -14,6 +14,11 @@
 
 namespace llvm {
 
+/*
+ * LoopNormalizerAnalysis: This pass ensures that the loop headers
+ * are normalized (see LoopNormalizer.h for more info) and allow to access
+ * the unique pre-header generated during the normalization.
+ */
 	class LoopNormalizerAnalysis: public llvm::FunctionPass {
 	public:
 		static char ID;

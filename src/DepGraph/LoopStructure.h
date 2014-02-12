@@ -12,6 +12,7 @@
 #include "DepGraph.h"
 #include "LoopInfoEx.h"
 #include "LoopControllersDepGraph.h"
+#include "LoopNormalizerAnalysis.h"
 #include <set>
 #include <stack>
 
@@ -29,9 +30,12 @@ namespace llvm {
 		virtual void getAnalysisUsage(AnalysisUsage &AU) const{
 			AU.addRequired<LoopControllersDepGraph>();
 			AU.addRequiredTransitive<LoopInfoEx>();
+			AU.addRequired<LoopNormalizerAnalysis>();
 			AU.setPreservesAll();
 		}
 
+		bool doInitialization(Module& M);
+		bool isIntervalComparison(ICmpInst* CI);
 		bool runOnFunction(Function & F);
 	};
 }

@@ -19,6 +19,14 @@
 
 namespace llvm {
 
+	/*
+	 * LoopNormalizer: This transformation pass ensures that
+	 * every natural loop of the program will have an unique pre-header basic block.
+	 *
+	 * The pre-header is a basic block that is executed immediately before the first
+	 * iteration of the loop.
+	 *
+	 */
 	class LoopNormalizer: public llvm::FunctionPass {
 	public:
 		static char ID;

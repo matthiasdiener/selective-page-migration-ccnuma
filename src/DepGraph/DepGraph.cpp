@@ -354,6 +354,22 @@ Graph Graph::generateSubGraph(int SCCID){
 
 }
 
+//Creates an entirely new graph, with equivalent nodes and edges
+Graph* Graph::clone(){
+
+	Graph* result;
+
+	result = new Graph(AS); //Somebody has to free this memory at some point in the future
+	*result = makeSubGraph(nodes);
+	result->parentGraph = NULL;  //Make the graphs independent
+
+	result->sCCs.clear();
+	result->reverseSCCMap.clear();
+
+	return result;
+
+}
+
 Graph Graph::makeSubGraph(std::set<GraphNode*> nodeList){
 
     Graph G(this->AS);
@@ -467,7 +483,7 @@ void Graph::dfsVisitBack_ext(GraphNode* u, std::set<GraphNode*> &visitedNodes, s
 
 }
 
-
+//Here we look for a back edge that leads to a node different than the first node.
 bool lookForNestedLoop( GraphNode* first,
 						GraphNode* current,
 						std::set<GraphNode*> &currentpath ,
@@ -503,17 +519,17 @@ bool lookForNestedLoop( GraphNode* first,
 }
 
 
-bool Graph::hasNestedLoop(int SCCID){
-
-	std::set<GraphNode*> SCC = getSCC(SCCID);
-
-	GraphNode* first = *(SCC.begin());
-
+bool Graph::hasNestedLoop(GraphNode* first){
 	std::set<GraphNode*> currentpath;
 	std::set<GraphNode*> visitedNodes;
 
 	return lookForNestedLoop( first, first, currentpath, visitedNodes);
+}
 
+bool Graph::hasNestedLoop(int SCCID){
+	std::set<GraphNode*> SCC = getSCC(SCCID);
+	GraphNode* first = *(SCC.begin());
+	return hasNestedLoop(first);
 }
 
 

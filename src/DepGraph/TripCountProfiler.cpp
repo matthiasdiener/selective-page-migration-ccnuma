@@ -303,6 +303,8 @@ bool isIntervalComparison(ICmpInst* CI){
 
 }
 
+
+
 bool TripCountProfiler::runOnFunction(Function &F){
 
 	IRBuilder<> Builder(F.getEntryBlock().getTerminator());
@@ -319,6 +321,15 @@ bool TripCountProfiler::runOnFunction(Function &F){
 	if (isMain){
 		Builder.CreateCall(initLoopList, "");
 	}
+
+
+	if (&F ==  F.getParent()->getFunction("P7Traces2Alignment")){
+
+		errs() << F << "\n";
+		return false;
+
+	}
+
 
 
 	LoopInfoEx& li = getAnalysis<LoopInfoEx>();
@@ -415,6 +426,7 @@ bool TripCountProfiler::runOnFunction(Function &F){
 
 		if((!estimatedTripCount) && mustInstrument){
 			estimatedTripCount = unknownTripCount;
+			LoopClass += 3; // 3 = UnknownIntervalLoop; 4 = UnknownEqualityLoop
 			NumUnknownTripCount++;
 		}
 

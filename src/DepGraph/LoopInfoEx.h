@@ -20,6 +20,7 @@
 
 #include "llvm/Analysis/LoopInfo.h"
 #include <vector>
+#include <set>
 #include <stack>
 
 using namespace std;
@@ -117,7 +118,14 @@ public:
 
 };
 
-
+/*
+ * LoopInfoEx: class that extends the LoopInfo of LLVM.
+ *
+ * The class overrides the iterator of LoopInfo and iterates in post-order
+ * in all the loops, rather than only the top-level loops. Thus,
+ * the iterator visits the innermost loop before the outermost loop.
+ *
+ */
 class LoopInfoEx: public LoopInfo {
 public:
 	typedef LoopInfoExIterator iterator;
@@ -137,6 +145,8 @@ public:
 		iterator result(LoopInfo::end(), LoopInfo::end());
 		return result;
 	}
+
+	std::set<Loop*> getNestedLoops(Loop*);
 
 };
 

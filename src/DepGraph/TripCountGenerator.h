@@ -56,6 +56,11 @@ namespace llvm {
 		Value* generateVectorEstimatedTripCount(BasicBlock* header, BasicBlock* entryBlock, Value* Op1, Value* Op2, ProgressVector* V1, ProgressVector* V2, ICmpInst* CI);
 		ProgressVector* joinVectors(ProgressVector* Vec1, ProgressVector* Vec2);
 
+		Instruction* generateModuleOfSubtraction(Value* Op1, Value* Op2, bool isSigned, Instruction* InsertBefore);
+
+		Instruction* generateReplaceIfEqual(Value* Op, Value* ValueToTest, Value* ValueToReplace, Instruction* InsertBefore);
+
+
 		void generateHybridEstimatedTripCounts(Function &F);
 
 		Value* getValueAtEntryPoint(Value* source, BasicBlock* loopHeader);

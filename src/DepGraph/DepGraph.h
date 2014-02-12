@@ -379,9 +379,10 @@ public:
 
 
 
+        //Creates an entirely new graph, with equivalent nodes and edges
+        Graph* clone();
 
-
-
+        //Creates a sub-graph that contains only the selected nodes given as argument
         Graph makeSubGraph(std::set<GraphNode*> nodeList);
 
         Graph generateSubGraph(Value *src, Value *dst); //Take a source value and a destination value and find a Connecting Subgraph from source to destination
@@ -389,10 +390,9 @@ public:
         Graph generateSubGraph(int SCCID); //Generate sub graph containing only the selected SCC
 
 
-
-        void dfsVisit(GraphNode* u, std::set<GraphNode*> &visitedNodes); //Used by findConnectingSubgraph() method
-        void dfsVisitBack(GraphNode* u, std::set<GraphNode*> &visitedNodes); //Used by findConnectingSubgraph() method
-
+        //Depth-First visiting methods (used for deciding reachability)
+        void dfsVisit(GraphNode* u, std::set<GraphNode*> &visitedNodes);
+        void dfsVisitBack(GraphNode* u, std::set<GraphNode*> &visitedNodes);
         void dfsVisitBack_ext(GraphNode* u, std::set<GraphNode*> &visitedNodes, std::map<int, GraphNode*> &firstNodeVisitedPerSCC);
 
 
@@ -417,6 +417,7 @@ public:
                         bool skipMemoryNodes);
 
 
+        // Statistics of the Graph
         int getNumOpNodes();
         int getNumCallNodes();
         int getNumMemNodes();
@@ -445,6 +446,9 @@ public:
         		           std::map<int, std::set<GraphNode*> > &SCCs);
 
 
+        /*
+         * Methods to handle SCCs in the Dependence Graph
+         */
         void recomputeSCCs();
         std::map<int, std::set<GraphNode*> > getSCCs();
         std::list<int> getSCCTopologicalOrder();
@@ -460,6 +464,7 @@ public:
                 int SCCID);
 
         bool hasNestedLoop(int SCCID);
+        bool hasNestedLoop(GraphNode* first);
 
         void getAcyclicPaths_rec(GraphNode* dst,
         		                 std::set<GraphNode*> &visitedNodes,

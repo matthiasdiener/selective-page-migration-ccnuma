@@ -23,7 +23,17 @@ using namespace std;
 
 namespace llvm {
 
-
+		/*
+		 * The class InputValues traverses the program looking for values
+		 * that may come from the public input of the program. Those variables are:
+		 *
+		 * 		- arguments of the function main (i.e. argc, argv)
+		 * 		- return values of externally linked functions
+		 * 		- pointers passed ad parameters to externally linked functions
+		 *
+		 * 	* We have a white list of functions that are externally linked but we know
+		 * 	that does not read data from the output (e.g. strlen)
+		 */
         class InputValues : public ModulePass {
         private:
 			llvm::Module* module;

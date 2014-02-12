@@ -36,7 +36,11 @@ STATISTIC(NumUnknownConditionsOL, "Number of Other Loops With Unknown TripCount"
 STATISTIC(NumIncompatibleOperandTypes, "Number of Loop Conditions With non-integer Operands");
 
 
+STATISTIC(NumIIL, "Number of Integer Interval Loops");
+STATISTIC(NumInstrIIL, "Number of Instrumented Integer Interval Loops");
 
+STATISTIC(NumIEL, "Number of Integer Equality Loops");
+STATISTIC(NumInstrIEL, "Number of Instrumented Integer Equality Loops");
 
 
 using namespace llvm;
@@ -197,7 +201,9 @@ Value* TripCountGenerator::getValueAtEntryPoint(Value* source, BasicBlock* loopH
 	Loop* loop = li.getLoopFor(loopHeader);
 
 	//Option 1: Loop invariant. Return the value itself
-	if (loop->isLoopInvariant(source)) return source;
+	if (loop->isLoopInvariant(source)) {
+		return source;
+	}
 
 	//Option 2: Sequence of redefinitions with PHI node in the loop header. Return the incoming value from the entry block
 	LoopControllersDepGraph& lcd = getAnalysis<LoopControllersDepGraph>();
@@ -207,6 +213,7 @@ Value* TripCountGenerator::getValueAtEntryPoint(Value* source, BasicBlock* loopH
 	}
 
 	int SCCID = lcd.depGraph->getSCCID(node);
+
 	Graph sccGraph = lcd.depGraph->generateSubGraph(SCCID);
 
 	for(Graph::iterator it =  sccGraph.begin(); it != sccGraph.end(); it++){
@@ -296,6 +303,7 @@ Value* TripCountGenerator::getValueAtEntryPoint(Value* source, BasicBlock* loopH
 		return NEW_INST;
 	}
 
+
 	//Option 9999: unknown. Return NULL
 	return NULL;
 }
@@ -375,7 +383,7 @@ ProgressVector* TripCountGenerator::generateConstantProgressVector(Value* source
 
 	std::set<std::stack<GraphNode*> > paths = depGraph->getAcyclicPathsInsideSCC(sourceNode, sourceNode);
 
-	//When a value has no cycle (single-node SCC) we must give a force and create an artificial cycle that
+	//When a value has no cycle (single-node SCC) we must create an artificial cycle that
 	//produces a vector with length zero
 	if (!paths.size()) {
 		std::stack<GraphNode*> forcedPath;
@@ -431,9 +439,25 @@ ProgressVector* TripCountGenerator::generateConstantProgressVector(Value* source
 		ProgressVector* currentPathVector = new ProgressVector(path);
 		Value* currentVectorValue = currentPathVector->getUniqueValue(Type::getInt64Ty(*context));
 
+
 		bool fail = false;
 
 		if (currentVectorValue) {
+
+			if (currentVectorValue->getName().equals("add97")){
+				errs() << "Achei!\n";
+
+				errs() << "Source: " << *source << "\n";
+				if(Instruction* I = dyn_cast<Instruction>(source)){
+					errs() << *(I->getParent())  << "\n\n";
+				}
+
+
+				errs() << *loopHeader;
+
+
+			}
+
 
 			if (li.getLoopFor(loopHeader)->isLoopInvariant(currentVectorValue)) {
 
@@ -494,44 +518,53 @@ void equalizeTypes(Value* &Op1, Value* &Op2, bool isSigned, IRBuilder<> Builder)
 }
 
 
-Value* llvm::TripCountGenerator::generateVectorEstimatedTripCount(
-		BasicBlock* header, BasicBlock* entryBlock, Value* Op1, Value* Op2,
-		ProgressVector* V1, ProgressVector* V2, ICmpInst* CI) {
+Instruction* TripCountGenerator::generateReplaceIfEqual
+		(Value* Op, Value* ValueToTest, Value* ValueToReplace,
+				Instruction* InsertBefore){
 
-	//V1 and V2 are used to calculate the step
-	int _V1;
-	int _V2;
-	int step;
+	BasicBlock* startBB = InsertBefore->getParent();
+	BasicBlock* endBB = InsertBefore->getParent()->splitBasicBlock(InsertBefore);
 
-	if (V1->isConstant() && V2->isConstant()) {
+	TerminatorInst* T = startBB->getTerminator();
 
-		_V1 = V1->getConstantValue();
-		_V2 = V2->getConstantValue();
+	IRBuilder<> Builder(T);
 
-	}	else {
+	BasicBlock* EQ = BasicBlock::Create(*context, "", InsertBefore->getParent()->getParent(), endBB);
 
-		/*
-		 * TODO: Deal with variable vectors
-		 */
+	Value* cmp;
+	cmp = Builder.CreateICmpEQ(Op,ValueToTest,"");
+	Builder.CreateCondBr(cmp, EQ, endBB, NULL);
+	T->eraseFromParent();
 
-		return NULL;
+	Builder.SetInsertPoint(EQ);
+	Builder.CreateBr(endBB);
 
-	}
+	Builder.SetInsertPoint(InsertBefore);
+	PHINode* phi = Builder.CreatePHI(Op->getType(), 2, "");
+	phi->addIncoming(ValueToReplace, EQ);
+	phi->addIncoming(Op, startBB);
 
+	return phi;
 
-	bool isSigned = CI->isSigned();
+}
 
-	BasicBlock* GT = BasicBlock::Create(*context, "", header->getParent(), header);
-	BasicBlock* LE = BasicBlock::Create(*context, "", header->getParent(), header);
-	BasicBlock* PHI = BasicBlock::Create(*context, "", header->getParent(), header);
+Instruction* llvm::TripCountGenerator::generateModuleOfSubtraction
+		(Value* Op1, Value* Op2, bool isSigned, Instruction* InsertBefore){
 
-	TerminatorInst* T = entryBlock->getTerminator();
+	BasicBlock* startBB = InsertBefore->getParent();
+	BasicBlock* endBB = InsertBefore->getParent()->splitBasicBlock(InsertBefore);
+
+	TerminatorInst* T = startBB->getTerminator();
 
 	IRBuilder<> Builder(T);
 
 	//Make sure the two operands have the same type
 	equalizeTypes(Op1, Op2, isSigned, Builder);
 	assert(Op1->getType() == Op2->getType() && "Operands with different data types, even after adjust!");
+
+
+	BasicBlock* GT = BasicBlock::Create(*context, "", InsertBefore->getParent()->getParent(), endBB);
+	BasicBlock* LE = BasicBlock::Create(*context, "", InsertBefore->getParent()->getParent(), endBB);
 
 	Value* cmp;
 
@@ -544,81 +577,78 @@ Value* llvm::TripCountGenerator::generateVectorEstimatedTripCount(
 	T->eraseFromParent();
 
 	/*
-	 * estimatedTripCount = |Op1 - Op2| / step
+	 * ModuleOfSubtraction = |Op1 - Op2|
 	 *
 	 * We will create the same sub in both GT and in LE blocks, but
 	 * with inverted operand order. Thus, the result of the subtraction
 	 * will be always positive.
-	 *
-	 * We will calculate the step using the vectors of the two variables
 	 */
 
 	Builder.SetInsertPoint(GT);
 	Value* sub1;
 	if (isSigned) {
 		//We create a signed sub
-		sub1 = Builder.CreateNSWSub(Op1, Op2, "dIni");
+		sub1 = Builder.CreateNSWSub(Op1, Op2, "diff");
 	} else {
 		//We create an unsigned sub
-		sub1 = Builder.CreateNUWSub(Op1, Op2, "dIni");
+		sub1 = Builder.CreateNUWSub(Op1, Op2, "diff");
 	}
-
-	//Calculate the step based on the vectors of the two variables
-	step = _V2 - _V1;
-	//assert(step && "Non-termination detected!");
-
-	//Avoiding division by zero
-	if (step != 0) {
-
-		if (isSigned) {
-			//We create a signed div
-			sub1 = Builder.CreateSDiv(sub1, ConstantInt::get(sub1->getType(), step), "TC");
-		} else {
-			//We create an unsigned div
-			sub1 = Builder.CreateUDiv(sub1, ConstantInt::get(sub1->getType(), step), "TC");
-		}
-
-	}
-
-	Builder.CreateBr(PHI);
+	Builder.CreateBr(endBB);
 
 
 	Builder.SetInsertPoint(LE);
 	Value* sub2;
 	if (isSigned) {
 		//We create a signed sub
-		sub2 = Builder.CreateNSWSub(Op2, Op1, "dIni");
+		sub2 = Builder.CreateNSWSub(Op2, Op1, "diff");
 	} else {
 		//We create an unsigned sub
-		sub2 = Builder.CreateNUWSub(Op2, Op1, "dIni");
+		sub2 = Builder.CreateNUWSub(Op2, Op1, "diff");
 	}
+	Builder.CreateBr(endBB);
 
-	//Calculate the step based on the vectors of the two variables
-	step = _V1 - _V2;
-	//assert(step && "Non-termination detected!");
-
-	//Avoiding division by zero
-	if (step != 0) {
-		if (isSigned) {
-			//We create a signed div
-			sub2 = Builder.CreateSDiv(sub2, ConstantInt::get(sub2->getType(), step), "TC");
-		} else {
-			//We create an unsigned div
-			sub2 = Builder.CreateUDiv(sub2, ConstantInt::get(sub2->getType(), step), "TC");
-		}
-	}
-
-	Builder.CreateBr(PHI);
-
-	Builder.SetInsertPoint(PHI);
+	Builder.SetInsertPoint(InsertBefore);
 	PHINode* sub = Builder.CreatePHI(sub2->getType(), 2, "");
 	sub->addIncoming(sub1, GT);
 	sub->addIncoming(sub2, LE);
 
+	return sub;
+}
 
-	Value* EstimatedTripCount;
-	if (isSigned) 	EstimatedTripCount = Builder.CreateSExtOrBitCast(sub, Type::getInt64Ty(*context), "EstimatedTripCount");
-	else			EstimatedTripCount = Builder.CreateZExtOrBitCast(sub, Type::getInt64Ty(*context), "EstimatedTripCount");
+
+Value* llvm::TripCountGenerator::generateVectorEstimatedTripCount(
+		BasicBlock* header, BasicBlock* entryBlock, Value* Op1, Value* Op2,
+		ProgressVector* V1, ProgressVector* V2, ICmpInst* CI) {
+
+	Value* _V1 = V1->getUniqueValue(Op1->getType());
+	Value* _V2 = V2->getUniqueValue(Op1->getType());
+
+	if(!_V1 || !_V2) return NULL;
+
+	TerminatorInst* T = entryBlock->getTerminator();
+	bool isSigned = CI->isSigned();
+
+	Instruction* initialDistance = generateModuleOfSubtraction(Op1, Op2, isSigned, T);
+
+	Instruction* step = generateModuleOfSubtraction(_V1, _V2, isSigned, T);
+
+	//Preventing division by zero
+	step = generateReplaceIfEqual(step, ConstantInt::get(step->getType(),0), ConstantInt::get(step->getType(),1), T);
+
+	IRBuilder<> Builder(T);
+
+	Instruction* EstimatedTripCount;
+	if (isSigned) {
+		//We create a signed div
+		EstimatedTripCount = BinaryOperator::CreateSDiv(initialDistance, step, "TC", T);
+	} else {
+		//We create an unsigned div
+		EstimatedTripCount = BinaryOperator::CreateUDiv(initialDistance, step, "TC", T);
+	}
+
+	if (isSigned) 	EstimatedTripCount = CastInst::CreateSExtOrBitCast(EstimatedTripCount, Type::getInt64Ty(*context), "EstimatedTripCount", T);
+	else			EstimatedTripCount = CastInst::CreateSExtOrBitCast(EstimatedTripCount, Type::getInt64Ty(*context), "EstimatedTripCount", T);
+
 
 	switch(CI->getPredicate()){
 		case CmpInst::ICMP_UGE:
@@ -627,7 +657,7 @@ Value* llvm::TripCountGenerator::generateVectorEstimatedTripCount(
 		case CmpInst::ICMP_SLE:
 			{
 				Constant* One = ConstantInt::get(EstimatedTripCount->getType(), 1);
-				EstimatedTripCount = Builder.CreateAdd(EstimatedTripCount, One);
+				EstimatedTripCount = BinaryOperator::CreateAdd(EstimatedTripCount, One, "", T);
 				break;
 			}
 		default:
@@ -635,10 +665,7 @@ Value* llvm::TripCountGenerator::generateVectorEstimatedTripCount(
 	}
 
 	//Insert a metadata to identify the instruction as the EstimatedTripCount
-	Instruction* i = dyn_cast<Instruction>(EstimatedTripCount);
-	MarkAsTripCount(*i);
-
-	Builder.CreateBr(header);
+	MarkAsTripCount(*EstimatedTripCount);
 
 	//Adjust the PHINodes of the loop header accordingly
 	//
@@ -649,13 +676,11 @@ Value* llvm::TripCountGenerator::generateVectorEstimatedTripCount(
 		if (PHINode* I = dyn_cast<PHINode>(tmp)){
 			int i = I->getBasicBlockIndex(entryBlock);
 			if (i >= 0){
-				I->setIncomingBlock(i,PHI);
+				I->setIncomingBlock(i,EstimatedTripCount->getParent());
 			}
 		}
 
 	}
-
-
 
 	return EstimatedTripCount;
 }
@@ -667,6 +692,8 @@ void llvm::TripCountGenerator::generateHybridEstimatedTripCounts(Function& F) {
 
 	for(LoopInfoEx::iterator lit = li.begin(); lit != li.end(); lit++){
 
+
+
 		//Indicates if we don't have ways to determine the trip count
 		bool unknownTC = false;
 
@@ -674,6 +701,10 @@ void llvm::TripCountGenerator::generateHybridEstimatedTripCounts(Function& F) {
 
 		BasicBlock* header = loop->getHeader();
 		BasicBlock* entryBlock = ln.entryBlocks[header];
+
+
+		LoopControllersDepGraph& lcd = getAnalysis<LoopControllersDepGraph>();
+		lcd.setPerspective(header);
 
 		/*
 		 * Here we are looking for the predicate that stops the loop.
@@ -707,6 +738,8 @@ void llvm::TripCountGenerator::generateHybridEstimatedTripCounts(Function& F) {
 			Op2 = getValueAtEntryPoint(CI->getOperand(1), header);
 
 
+
+
 			if((!Op1) || (!Op2) ) {
 
 				if (!LoopClass) NumUnknownConditionsIL++;
@@ -714,7 +747,6 @@ void llvm::TripCountGenerator::generateHybridEstimatedTripCounts(Function& F) {
 
 				unknownTC = true;
 			} else {
-
 
 				if (!(Op1->getType()->isIntegerTy() && Op2->getType()->isIntegerTy())) {
 					//We only handle loop conditions that compares integer variables
@@ -835,6 +867,9 @@ void TripCountGenerator::generatePericlesEstimatedTripCounts(Function &F){
 		BasicBlock* header = loop->getHeader();
 		BasicBlock* entryBlock = ln.entryBlocks[header];
 
+		LoopControllersDepGraph& lcd = getAnalysis<LoopControllersDepGraph>();
+		lcd.setPerspective(header);
+
 		/*
 		 * Here we are looking for the predicate that stops the loop.
 		 *
@@ -898,6 +933,13 @@ void TripCountGenerator::generatePericlesEstimatedTripCounts(Function &F){
 
 		if(!unknownTC) {
 			generatePericlesEstimatedTripCount(header, entryBlock, Op1, Op2, CI);
+
+			if (isIntervalComparison(CI)) {
+				NumInstrIIL++;
+			} else {
+				NumInstrIEL++;
+			}
+
 			NumPericlesEstimatedTCs++;
 		}
 
@@ -921,6 +963,9 @@ void TripCountGenerator::generateVectorEstimatedTripCounts(Function &F){
 
 		BasicBlock* header = loop->getHeader();
 		BasicBlock* entryBlock = ln.entryBlocks[header];
+
+		LoopControllersDepGraph& lcd = getAnalysis<LoopControllersDepGraph>();
+		lcd.setPerspective(header);
 
 		/*
 		 * Here we are looking for the predicate that stops the loop.
@@ -1002,11 +1047,11 @@ void TripCountGenerator::generateVectorEstimatedTripCounts(Function &F){
 bool TripCountGenerator::runOnFunction(Function &F){
 
 	if (usePericlesTripCount)
-		generatePericlesEstimatedTripCounts(F);
+		generatePericlesEstimatedTripCounts(F);  //Generate expressions using the simplified heuristic
 	else if (useHybridTripCount)
-		generateHybridEstimatedTripCounts(F);
+		generateHybridEstimatedTripCounts(F); //Generate expressions using the vector heuristic whenever possible, and the simplified heuristic in the remaining cases
 	else
-		generateVectorEstimatedTripCounts(F);
+		generateVectorEstimatedTripCounts(F); //Generate expressions using the vector heuristic
 
 	return true;
 }
