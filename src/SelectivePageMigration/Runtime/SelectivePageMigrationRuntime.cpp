@@ -161,10 +161,12 @@ void migrate(long PageStart, long PageEnd) {
 
   hwloc_bitmap_singlify(set);
 
-  hwloc_set_area_membind(__spm_topo, (const void*)(PageStart << PAGE_EXP),
-                         (PageEnd - PageStart) << PAGE_EXP,
-                         (hwloc_const_cpuset_t)set, HWLOC_MEMBIND_BIND,
-                         HWLOC_MEMBIND_MIGRATE );
+  assert(
+    hwloc_set_area_membind(__spm_topo, (const void*)(PageStart << PAGE_EXP),
+                           (PageEnd - PageStart) << PAGE_EXP,
+                           (hwloc_const_cpuset_t)set, HWLOC_MEMBIND_BIND,
+                           HWLOC_MEMBIND_MIGRATE) != -1 &&
+    "Unable to migrate requested pages");
   hwloc_bitmap_free(set);
 }
 
