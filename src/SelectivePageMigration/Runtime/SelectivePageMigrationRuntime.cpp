@@ -5,10 +5,8 @@
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
-
 #include <hwloc.h>
-#include <numaif.h>
-#include <sys/syscall.h>
+
 
 #ifdef __DEBUG__
 #define SPMR_DEBUG(X) X
@@ -20,8 +18,11 @@ extern "C" {
   void __spm_init();
   void __spm_end();
   void __spm_get (void *Array, long Start, long End, long Reuse);
-  void __spm_give(void *Array, long Start, long End, long Reuse);
+  //void __spm_give(void *Array, long Start, long End, long Reuse);
 }
+
+const double __spm_ReuseConstant = 200.0;
+const double __spm_CacheConstant = 0.1;
 
 const long PAGE_EXP  = 12;
 const long PAGE_SIZE = (1 << PAGE_EXP);
@@ -34,9 +35,9 @@ private:
   struct PageRegion {
     long Start, End;
     bool operator<(const PageRegion& Other) const {
-      SPMR_DEBUG(std::cout << "Runtime: (" << Start << ", " << End << ") < ("
-                << Other.Start << ", " << Other.End << ") == "
-                << (Start < Other.Start ? End < Other.End : false) << "\n");
+		SPMR_DEBUG(std::cout << "Runtime: (" << Start << ", " << End << ") < ("
+							 << Other.Start << ", " << Other.End << ") == "
+							 << (Start < Other.Start ? End < Other.End : false) << "\n");
       return Start < Other.Start ? End < Other.End : false;
     }
   };
@@ -148,6 +149,7 @@ PageIntervals::RegionsTy::iterator PageIntervals::join(RegionsTy::iterator L,
 static PageIntervals SPMPI;
 static std::mutex    SPMPILock;
 
+
 void migrate(long PageStart, long PageEnd) {
   SPMR_DEBUG(std::cout << "Runtime: migrate pages: " << PageStart << " to "
                        << PageEnd << "\n");
@@ -161,12 +163,13 @@ void migrate(long PageStart, long PageEnd) {
 
   hwloc_bitmap_singlify(set);
 
-  assert(
-    hwloc_set_area_membind(__spm_topo, (const void*)(PageStart << PAGE_EXP),
-                           (PageEnd - PageStart) << PAGE_EXP,
-                           (hwloc_const_cpuset_t)set, HWLOC_MEMBIND_BIND,
-                           HWLOC_MEMBIND_MIGRATE) != -1 &&
-    "Unable to migrate requested pages");
+	assert(
+			hwloc_set_area_membind(__spm_topo, (const void*)(PageStart << PAGE_EXP),
+								  (PageEnd - PageStart) << PAGE_EXP,
+								  (hwloc_const_cpuset_t)set, HWLOC_MEMBIND_BIND,
+								  HWLOC_MEMBIND_MIGRATE)
+	!= -1 && "Unable to migrate requested pages");
+                         
   hwloc_bitmap_free(set);
 }
 
@@ -180,6 +183,7 @@ void __spm_init() {
        obj = obj->parent)
     if (obj->type == HWLOC_OBJ_CACHE)
       __spm_cache_size += obj->attr->cache.size;
+
 }
 
 void __spm_end() {
@@ -189,34 +193,41 @@ void __spm_end() {
 
 
 void __spm_get(void *Ary, long Start, long End, long Reuse) {
-  SPMR_DEBUG(std::cout << "Runtime: get page for: " << (long unsigned)Ary
-                       << ", " << Start << ", " << End << ", "
-                       << Reuse << "\n");
+	SPMR_DEBUG(std::cout << "Runtime: get page for: " << (long unsigned)Ary
+		<< ", " << Start << ", " << End << ", "
+		<< Reuse << "\n");
 
-  long PageStart = ((long)Ary + Start)/PAGE_SIZE;
-  long PageEnd   = ((long)Ary + End)/PAGE_SIZE;
+	long PageStart = ((long)Ary + Start)/PAGE_SIZE;
+	long PageEnd   = ((long)Ary + End)/PAGE_SIZE;
 
-  SPMR_DEBUG(std::cout << "Runtime: get pages: " << PageStart << ", "
-                       << PageEnd << "\n");
 
-  pid_t Idx = syscall(SYS_gettid);
+	if ( (double)(End-Start) > __spm_CacheConstant*__spm_cache_size && (double)Reuse/(End-Start > 0 ? End-Start : 100000) > __spm_ReuseConstant ) { //heuristic
 
-  SPMPILock.lock();
-  auto It = SPMPI.insert(PageStart, PageEnd, Idx);
-  if (It == SPMPI.end()) {
-    SPMPILock.unlock();
-    return;
-  }
-  SPMPILock.unlock();
+/*
+		SPMR_DEBUG(std::cout << "Runtime: get pages: " << PageStart << ", "
+			<< PageEnd << "\n");
 
-  SPMR_DEBUG(std::cout << "Runtime: thread #" << Idx
-                       << " now holds pages (possibly amongst others): "
-                       << It->first.Start << " to " << It->first.End << "\n");
+		pid_t Idx = syscall(SYS_gettid);
 
-  return (void) migrate(PageStart, PageEnd);
+		SPMPILock.lock();
+		auto It = SPMPI.insert(PageStart, PageEnd, Idx);
+		
+		if (It == SPMPI.end()) {
+			SPMPILock.unlock();
+			return;
+		}
+		SPMPILock.unlock();
+
+		SPMR_DEBUG(std::cout << "Runtime: thread #" << Idx
+			<< " now holds pages (possibly amongst others): "
+			<< It->first.Start << " to " << It->first.End << "\n");
+*/
+		return (void) migrate(PageStart, PageEnd);
+
+	}//heuristic
 }
 
-void __spm_give(void *Array, long Start, long End, long Reuse) {
+//void __spm_give(void *Array, long Start, long End, long Reuse) {
   // Currently unused.
-}
+//}
 
