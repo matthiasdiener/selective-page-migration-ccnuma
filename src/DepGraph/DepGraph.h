@@ -16,6 +16,7 @@
 #include "llvm/Analysis/DominanceFrontier.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/CFG.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/CallSite.h"
 #include "llvm/Support/CommandLine.h"
@@ -542,7 +543,7 @@ public:
                 //Print dependency graph (in dot format)
                 g->toDot(M.getModuleIdentifier(), Filename);
 
-                DisplayGraph(sys::Path(Filename), true, GraphProgram::DOT);
+                DisplayGraph(Filename, true, GraphProgram::DOT);
 
                 return false;
         }

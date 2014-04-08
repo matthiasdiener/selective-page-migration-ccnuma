@@ -97,7 +97,7 @@ public:
 				errs() << it->first << "\n";
 
 				g->generateSubGraph(it->first).toDot(F.getParent()->getModuleIdentifier(), Filename);
-				DisplayGraph(sys::Path(Filename), true, GraphProgram::DOT);
+				DisplayGraph(Filename, true, GraphProgram::DOT);
 			}
 
 			return false;
