@@ -1,0 +1,26 @@
+From 22ffb0d5a37053c741a392ab485d5a8d06624c98 Mon Sep 17 00:00:00 2001
+From: Simon Moll <simon.m.moll@googlemail.com>
+Date: Thu, 10 Apr 2014 16:31:49 -0300
+Subject: [PATCH 2/2] adding loop simplify
+
+---
+ lib/CodeGen/BackendUtil.cpp |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/lib/CodeGen/BackendUtil.cpp b/lib/CodeGen/BackendUtil.cpp
+index e6bef90..9ff065a 100644
+--- a/lib/CodeGen/BackendUtil.cpp
++++ b/lib/CodeGen/BackendUtil.cpp
+@@ -173,7 +173,8 @@ static void addAddressSanitizerPasses(const PassManagerBuilder &Builder,
+       static_cast<const PassManagerBuilderWrapper&>(Builder);
+   const CodeGenOptions &CGOpts = BuilderWrapper.getCGOpts();
+   const LangOptions &LangOpts = BuilderWrapper.getLangOpts();
+-  PM.add(createSelectivePageMigrationPass());
++  PM.add(createLoopSimplifyPass());
++  PM.add(createRangedAddressSanitizerPass());
+   PM.add(createAddressSanitizerFunctionPass(
+       LangOpts.Sanitize.InitOrder,
+       LangOpts.Sanitize.UseAfterReturn,
+-- 
+1.7.9.5
+

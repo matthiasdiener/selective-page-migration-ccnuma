@@ -16,7 +16,7 @@ static RegisterPass<RelativeExecutions>
   X("rel-exec", "Location-relative execution count inference");
 char RelativeExecutions::ID = 0;
 
-#if 0
+#if 1
 #define RE_DEBUG(X) { if (ClDebug) { X; } }
 #else
 #define RE_DEBUG(X) { X; }
