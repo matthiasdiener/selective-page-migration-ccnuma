@@ -17,6 +17,49 @@
 using namespace llvm;
 typedef std::set<const Value*> ValueSet;
 
+/*
+ * RangedAddressSanitizer
+ *
+ * RangedAddressSanitizer optimizes AddressSanitizer when applied to loop nests with
+ * linear array accesses as shown below:
+ *
+ * Example code:
+ * void foo(int* V, int N) {
+ *   for(int i = 0; i < N-1; i++){
+ *      //All vector operations are checked
+ *      V[i] = V[i] + V[i+1];
+ *  }
+ * }
+ *
+ * It detects the range of the array accesses and lets AddressSanitizer verify that any
+ * access in that range is safe. If this applies, the actual loop is executed efficiently
+ * Without any memory checks. In case the range check touches poisoned memory, execution
+ * continues on regular instrumented code.
+ *
+ *
+ * Code after applying RangedAddressSanitizer:
+ *
+ * void foo(int* V, int N) {
+ *  if (__fasan_check(V,0,N-1)){ // This check is O(N)
+ *    for(int i = 0; i < N-1; i++){
+ *      //The following operation has no bounds checks
+ *      V[i] = V[i] + V[i+1];
+ *    }
+ *  } else {
+ *    for(int i = 0; i < N-1; i++){
+ *      //All accesses are checked
+ *      V[i] = V[i] + V[i+1];
+ *    }
+ *  }
+ * }
+ *
+ *
+ * The environment variable FASANMODULE must point to the BC-compiled code of Runtime/FASanRuntime.cpp
+ * If FASAN_DISABLE is set to any value, the pass will execute without any effect
+ *
+ * Use AddressSanitizer.cpp that ships with this pass and apply the accompanying patches to clang
+ * (clang_patches).
+ */
 class RangedAddressSanitizer : public FunctionPass {
 public:
   static char ID;
@@ -28,11 +71,13 @@ public:
   bool doInitialization(Module &M);
   bool doFinalization(Module &M);
   
+  // set of memory instructions that must not be instrumented
   const ValueSet & getSafeUses() const
   {
       return safeUseSet;
   }
   
+  // set of pointer-yielding values that must be instrumented
   const ValueSet & getForcedChecks() const
   {
       return forcedCheckSet;
@@ -44,9 +89,9 @@ private:
   DataLayout         *DL_;
   DominatorTree      *DT_;
   LoopInfo           *LI_;
-  ReduceIndexation   *RI_;
-  RelativeExecutions *RE_;
-  RelativeMinMax     *RMM_;
+  ReduceIndexation   *RI_;  // Decomposes pointer based memory accesses into Array+Offset
+  RelativeExecutions *RE_;  // array re-use
+  RelativeMinMax     *RMM_; // induction variable bounds
   SymPyInterface     *SPI_;
 
   LLVMContext *Context_;
@@ -58,6 +103,8 @@ private:
   ValueSet safeUseSet;
   ValueSet forcedCheckSet;
 
+  // Detects the offset range of the array accesses by instruction I (load or store)
+  // the call info is stored in Calls_
   bool generateCallFor(Loop *L, Instruction *I);
 
   struct CallInfo {

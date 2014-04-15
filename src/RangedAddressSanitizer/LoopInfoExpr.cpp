@@ -16,7 +16,7 @@ static RegisterPass<LoopInfoExpr>
   X("loop-info-expr", "Loop information");
 char LoopInfoExpr::ID = 0;
 
-#if 1
+#if 0
 #define LIE_DEBUG(X) { if (ClDebug) { X; } }
 #else
 #define LIE_DEBUG(X) { X; }
@@ -96,6 +96,28 @@ Expr LoopInfoExpr::getExprForLoop(Loop *L, Value *V) {
     case Instruction::ZExt:
     case Instruction::Trunc:
       return getExprForLoop(L, I->getOperand(0));
+    case Instruction::PHI: {
+    	BasicBlock * phiBlock = I->getParent();
+    	Loop *loop = LI_->getLoopFor(phiBlock);
+
+    	if (loop->getHeader() == phiBlock) {
+    		return Expr(V);
+    	} else {
+    		dbgs() << "[LIE] Work-around: trying to expand non-induction PHI-node\n";
+    		PHINode * phi = dyn_cast<PHINode>(V);
+    		uint numIncoming = phi->getNumIncomingValues();
+    		Expr firstExpr = getExprForLoop(L, phi->getIncomingValue(0));
+    		for (uint i = 1; i < numIncoming; ++i) {
+    			Expr inExpr = getExprForLoop(L, phi->getIncomingValue(i));
+    			if (firstExpr != inExpr) {
+    				dbgs() << "[LIE] Non-trivial PHI-node usage out of loop header. Aborting (Unsupported)..\n";
+    				abort();
+    			}
+    		}
+    		return firstExpr;
+    	}
+
+    } break;
     default:
       return Expr(V);
   }
@@ -114,7 +136,7 @@ bool LoopInfoExpr::
   if (! getLoopInfo(L, IndPHI, IndStart, IndEnd, IndStep)) {
     return false;
   }
-  // coincides with the induction variablt
+  // coincides with the induction variable
   if (IndPHI == coPHI) {
       coVarStart = IndStart;
       coVarStep = IndStep;
@@ -215,9 +237,15 @@ bool LoopInfoExpr::
                         "loop-variance\n");
     return false;
   }
-
+  
   if (PHINode *Phi = getSingleLoopVariantPhi(L, Var)) {
+      assert(Phi->getParent() == L->getHeader() && "PHI-node in the path from loop header to CmpInst");
+
+      LIE_DEBUG(dbgs() << "LIE:\n\tIndvar=" << *Phi << "\n\tchecked expr=" << Var << "\n\tboundary expr=" << Invar << "\n")
+
+            
 #if 1
+#warning "Buildling with latch finder-hack"
       int latchIndex = Phi->getBasicBlockIndex(L->getLoopLatch());
       Value * LatchIncoming = Phi->getIncomingValue(latchIndex);
       int preheaderIndex = 1 - latchIndex;
@@ -233,20 +261,40 @@ bool LoopInfoExpr::
                           " loop-variance\n");
       return false;
     }
-
-// Determine the step size (over-approximate the step size)
-    ExprMap Repls;
-	Expr PhiEx(Phi), LatchIncomingEx = getExprForLoop(Toplevel, LatchIncoming),
-		 Wild = Expr::WildExpr();
-	if (!LatchIncomingEx.match(PhiEx + Wild, Repls) || Repls.size() != 1 ||
-		Repls[Wild].has(PhiEx)) {
-	  LIE_DEBUG(dbgs() << "LoopInfoExpr: could not determine accurate step\n");
-	  return false;
-	}
+    
+#if 1
+// Determine the offset at which "var" is checked in the CmpInst
+    Expr varOffsetExpr;
+    {
+        ExprMap Repls;
+        Expr PhiEx(Phi), Wild = Expr::WildExpr();
+        if (!Var.match(PhiEx + Wild, Repls) || Repls.size() != 1 ||
+                Repls[Wild].has(PhiEx)) {
+          LIE_DEBUG(dbgs() << "LoopInfoExpr: could not determine checked expr\n");
+          return false;
+        }
+        varOffsetExpr = Repls[Wild];
+    }
+#endif
+    dbgs() << "[LIE] Checked offset " << varOffsetExpr << "\n";
+    
+// Determine the step size (change of var) in a single loop iteration
+    {
+        ExprMap Repls;
+        Expr PhiEx(Phi), LatchIncomingEx = getExprForLoop(Toplevel, LatchIncoming),
+                 Wild = Expr::WildExpr();
+        if (!LatchIncomingEx.match(PhiEx + Wild, Repls) || Repls.size() != 1 ||
+                Repls[Wild].has(PhiEx)) {
+          LIE_DEBUG(dbgs() << "LoopInfoExpr: could not determine accurate step\n");
+          return false;
+        }
+        IndvarStep = Repls[Wild];
+    }
 
 // Approximate the last feasible value (closest to the boundary)
-	// FIXME this is dangerous as we do not check which branch is the loop exit
-    Indvar = Phi;
+    // FIXME this is dangerous as we do not check which branch is the loop exit    
+    Indvar = Phi;   
+    
     IndvarStart = getExprForLoop(Toplevel, PreheaderIncoming);
     switch (ICI->getPredicate()) {
       case CmpInst::ICMP_SLT:
@@ -264,10 +312,10 @@ bool LoopInfoExpr::
         IndvarEnd = Invar;
         break;
       case CmpInst::ICMP_EQ:
-    	  if (Repls[Wild].isNegative()) {
+    	  if (IndvarStep.isNegative()) {
     		  IndvarEnd = Invar + 1;
     	  } else {
-    		  assert(Repls[Wild].isPositive());
+    		  assert(IndvarStep.isPositive());
     		  IndvarEnd = Invar - 1;
     	  }
     	  break;
@@ -277,9 +325,7 @@ bool LoopInfoExpr::
         return false;
     }
 
-
-
-    IndvarStep = Repls[Wild];
+  
 
     LIE_DEBUG(dbgs() << "LoopInfoExpr: induction variable, start, end, step: "
                      << *Indvar << " => (" << IndvarStart << ", " << IndvarEnd
@@ -290,6 +336,51 @@ bool LoopInfoExpr::
   return false;
 }
 
+/*
+ * Simple loop
+ * 
+ * Properties:
+ * - Single exit
+ * - Exit is controlled by a single CmpInst
+ * - CmpInst has one loop variant operand and one loop invariant operand
+ * - Iteration state is representable by a single PHI-node in the header
+ *
+ * Expression tree leaves:
+ * - loop header PHI-nodes
+ * - completely loop invariant values
+ * 
+ * @loopExpr used header PHI-nodes after one iteration
+ * @variantExitTerm loop variant operand of the CmpInst
+ * @limitTerm loop invariant operand of the CmpInst
+ * @headerPHI single PHI-node capturing the iteration state of the loop
+ * 
+ * @return true on success
+ */
+#if 0
+bool LoopInfoExpr::getSimpleLoopStructure(Loop * L, PHINode &* headerPHI, Expr & loopExpr, Expr & variantExitTerm, Expr & limitTerm)
+{
+  BasicBlock * latchBlock = L->getLoopLatch();
+  BasicBlock * headerBlock = L->getHeader();
+  BasicBlock * exitBlock = L->getExitBlock();
+  BasicBlock * exitingBlock = L->getExitingBlock();
+  
+  if (!latchBlock || ! headerBlock || !exitBlock || !exitingBlock) {
+    dbgs() << "SimpleLoopStructure: latch,header,exit or exiting block missing!\n";
+    return false;
+  }
+    
+  // Check the exit branch
+  Instruction * termInst = exitingBlock->getTerminator();
+  BranchInst * branchInst = dyn_cast<BranchInst>(termInst);
+  if (!branchInst) {
+      return false;
+  }
+  
+  branchInst->getOperand(0);
+  branchInst->getOperand(1);
+}
+#endif
+
 PHINode *LoopInfoExpr::getSingleLoopVariantPhi(Loop *L, Expr Ex) {
   auto Symbols = Ex.getSymbols();
   PHINode *Phi = nullptr;
@@ -298,7 +389,12 @@ PHINode *LoopInfoExpr::getSingleLoopVariantPhi(Loop *L, Expr Ex) {
     if (!L->isLoopInvariant(V)) {
       if (!isa<PHINode>(V) || Phi)
         return nullptr;
-      Phi = cast<PHINode>(V);
+              
+      PHINode * candPhi = cast<PHINode>(V);
+      // FIXME requires a more sophisticated solution. only accept PHI-nodes in the loop header
+      if (L->getHeader() == candPhi->getParent()) {
+        Phi = candPhi;
+      }
     }
   }
   return Phi;

@@ -10,7 +10,7 @@ Clang 3.4.1 (apply the git patches in clang_patches/)
 # Installation Instructions
 1. Copy contents into lib/Transforms/Instrumentation/
 2. Run make in Runtime/
-3. Let FASANMODULE point to the BC runtime module
+3. Let FASANMODULE point to the BC runtime module (using the supplied Makefile)
 
 # Usage instructions
 With the patch applied, ASan will always run with the optimization enabled (-fsanitize=address).

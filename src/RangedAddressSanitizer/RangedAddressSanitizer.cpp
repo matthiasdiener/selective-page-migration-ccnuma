@@ -16,6 +16,7 @@
 #include <sstream>
 #include <vector>
 
+// Enables array re-use computatio (currently broken)
 #if 0
 #define ENABLE_REUSE
 #endif
@@ -56,6 +57,7 @@ FunctionPass* llvm::createRangedAddressSanitizerPass()
 /* ************************************************************************** */
 bool RangedAddressSanitizer::doInitialization(Module &M)
 {
+// Link FastAddressSanitizer functions into the target module
     LLVMContext & context = M.getContext();
     const char * fasanPath = getenv("FASANMODULE");
     
@@ -73,12 +75,14 @@ bool RangedAddressSanitizer::doInitialization(Module &M)
 
 
     PointerType * voidPtrTy = PointerType::getInt8PtrTy(context, 0);
+    IntegerType * boolTy = IntegerType::get(context, 1);
     Type * voidTy = Type::getVoidTy(context);
-    FunctionType * fType = FunctionType::get(voidTy, ArrayRef<Type*>(voidPtrTy), false);
+    FunctionType * touchFunType = FunctionType::get(voidTy, ArrayRef<Type*>(voidPtrTy), false);
+    FunctionType * verifyFunType = FunctionType::get(boolTy, ArrayRef<Type*>(voidPtrTy), false);
 
     ValueToValueMapTy reMap;
-    reMap[fasanModule->getFunction("__fasan_touch")] = M.getOrInsertFunction("__fasan_touch", fType);
-    reMap[fasanModule->getFunction("__fasan_verify")] = M.getOrInsertFunction("__fasan_verify", fType);
+    reMap[fasanModule->getFunction("__fasan_touch")] = M.getOrInsertFunction("__fasan_touch", touchFunType);
+    reMap[fasanModule->getFunction("__fasan_verify")] = M.getOrInsertFunction("__fasan_verify", verifyFunType);
     
     // migrate check function
     {
@@ -91,6 +95,7 @@ bool RangedAddressSanitizer::doInitialization(Module &M)
         Function * clonedCheckFunc = CloneFunction(checkFunc, valueMap, false, 0);
         M.getFunctionList().insert(M.getFunctionList().end(), clonedCheckFunc);
         ReuseFn_ = clonedCheckFunc;
+        clonedCheckFunc->setLinkage(GlobalValue::InternalLinkage); // avoid conflicts during linking
 
         // re-map fake use to local copy
         for (auto & BB : *clonedCheckFunc) {
@@ -225,6 +230,7 @@ bool RangedAddressSanitizer::runOnFunction(Function &F) {
   ReuseFnDestroy_ =
     F.getParent()->getOrInsertFunction("__spm_give", ReuseFnType);
 
+// Visit all loops in bottom-up order (innter-most loops first)
   std::set<BasicBlock*> Processed;
   auto Entry = DT_->getRootNode();
   for (auto ET = po_begin(Entry), EE = po_end(Entry); ET != EE; ++ET) {
@@ -245,6 +251,7 @@ bool RangedAddressSanitizer::runOnFunction(Function &F) {
       SPM_DEBUG(dbgs() << "RangedAddressSanitizer: processing loop at "
                        << Header->getName() << "\n");
 
+    // visit all memory acccesses in this loop
       for (auto BB = L->block_begin(), BE = L->block_end(); BB != BE; ++BB) {
         if (!Processed.count(*BB)) {
           Processed.insert(*BB);
@@ -259,19 +266,19 @@ bool RangedAddressSanitizer::runOnFunction(Function &F) {
   for (auto &CI : Calls_) {
     BasicBlock * Preheader = CI.Preheader;
     
-    // insert range check
+  // insert range check
     IRBuilder<> IRB(Preheader->getTerminator());
     Value *VoidArray = IRB.CreateBitCast(CI.Array, VoidPtrTy);
     std::vector<Value*> Args = { VoidArray, CI.Min, CI.Max, CI.Reuse };
     CallInst *CR = IRB.CreateCall(ReuseFn_, Args);
     
-    // get loop
+  // get loop
     Loop* finalLoop = CI.FinalLoop;
     Loop::block_iterator itBodyBlock,S,E;
     S = finalLoop->block_begin();
     E = finalLoop->block_end();
     
-    // clone loop body
+  // clone loop body (cloned loop will run unchecked)
     ValueToValueMapTy cloneMap;
     
     BasicBlock * clonedHeader = 0;
@@ -299,7 +306,7 @@ bool RangedAddressSanitizer::runOnFunction(Function &F) {
         abort();
     }
     
-    // Remap uses inside cloned region (mark pointers in the region as unguarded)
+  // Remap uses inside cloned region (mark pointers in the region as unguarded)
     for (BasicBlock * block : clonedBlocks) {
         for(auto & inst : *block) {
             RemapInstruction(&inst, cloneMap, RF_IgnoreMissingEntries);
@@ -317,9 +324,9 @@ bool RangedAddressSanitizer::runOnFunction(Function &F) {
         }
     }
     
-    // TODO fix PHI-nodes in exit blocks
+   // TODO fix PHI-nodes in exit blocks
     
-    // rewire terminator to branch to special code (conditioned on check call)
+   // Rewire terminator of the range check to branch to the cloned region
     TerminatorInst * checkTermInst = CR->getParent()->getTerminator();
     
     if (BranchInst * checkBranchInst = dyn_cast<BranchInst>(checkTermInst)) {      
@@ -344,7 +351,7 @@ bool RangedAddressSanitizer::runOnFunction(Function &F) {
     SPM_DEBUG(dbgs() << "RangedAddressSanitizer: call instruction: " << *CR
                      << "\n");
 
-    // supplement tracking call
+   // Supplement range check
     InlineFunctionInfo IFI;
     InlineFunction(CR, IFI, false);
 
@@ -358,6 +365,7 @@ bool RangedAddressSanitizer::generateCallFor(Loop *L, Instruction *I) {
   if (!isa<LoadInst>(I) && !isa<StoreInst>(I))
     return false;
 
+// Reduce memory access to array base pointer + offset
   Value *Array;
   unsigned Size;
   Expr Subscript;
@@ -418,6 +426,11 @@ bool RangedAddressSanitizer::generateCallFor(Loop *L, Instruction *I) {
   
   assert(Preheader && "could not find nor recover pre-header");
   BasicBlock *Exit      = Final->getExitBlock();
+  if (!Exit) {
+	  errs() << "[ERROR] Non unique exit block in loop. Leaving loop uninstrumented " << *L << "\n";
+	  return false;
+
+  }
   assert(Exit && "loop w/o unique exit block");
   
   // FIXME: instead of bailing, we should set the toplevel loop in the call to
@@ -431,6 +444,7 @@ bool RangedAddressSanitizer::generateCallFor(Loop *L, Instruction *I) {
     }
   }
 
+// Query array offset range
   Expr MinEx, MaxEx;
   if (!RMM_->getMinMax(Subscript, MinEx, MaxEx)) {
     SPM_DEBUG(dbgs() << "RangedAddressSanitizer: could calculate min/max for "
@@ -440,6 +454,7 @@ bool RangedAddressSanitizer::generateCallFor(Loop *L, Instruction *I) {
   SPM_DEBUG(dbgs() << "RangedAddressSanitizer: min/max for subscript "
                    << Subscript << ": " << MinEx << ", " << MaxEx << "\n");
 
+// Materialize expressions in the loop header
   IRBuilder<> IRB(Preheader->getTerminator());
 #ifdef ENABLE_REUSE
   Value *Reuse = (ReuseEx * Size).getExprValue(64, IRB, Module_);
@@ -452,6 +467,7 @@ bool RangedAddressSanitizer::generateCallFor(Loop *L, Instruction *I) {
   SPM_DEBUG(dbgs() << "RangedAddressSanitizer: values for reuse, min, max: "
                    << *Reuse << ", " << *Min << ", " << *Max << "\n");
 
+// If there is already a range check for this array and loop cached, merge the intervals
   CallInfo CI = { Final, Preheader, Exit, Array, Min, Max, Reuse };
   auto Call = Calls_.insert(CI);
   

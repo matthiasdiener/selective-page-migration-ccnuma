@@ -23,10 +23,12 @@ public:
   virtual void getAnalysisUsage(AnalysisUsage &AU) const;
   virtual bool runOnFunction(Function &F);
 
+  // return expressions for the minimum and maximum value that V can attain in L
   bool getMinMaxRelativeTo(Loop *L, Value *V, Expr &Min, Expr &Max);
   bool getMinMax(Expr Ex, Expr &Min, Expr &Max);
 
 private:
+  // interval logic on expression trees
   void addMinMax(Expr PrevMin, Expr PrevMax, Expr OtherMin, Expr OtherMax,
                  Expr &Min, Expr &Max);
   void mulMinMax(Expr PrevMin, Expr PrevMax, Expr OtherMin, Expr OtherMax,
