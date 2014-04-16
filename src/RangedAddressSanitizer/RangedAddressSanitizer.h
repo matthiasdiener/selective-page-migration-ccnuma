@@ -103,6 +103,12 @@ private:
   ValueSet safeUseSet;
   ValueSet forcedCheckSet;
 
+  // will add inst to the safe use set, if it is a memory instruction accessing array
+  void markSafeArrayUse(Instruction * inst, Value * array);
+
+  // try to decompose the instruction in a base pointer plus array offset
+  bool reduceMemoryAccess(Instruction * I, Value *& oArray, Expr & oSubscript, unsigned & oSize);
+
   // Detects the offset range of the array accesses by instruction I (load or store)
   // the call info is stored in Calls_
   bool generateCallFor(Loop *L, Instruction *I);

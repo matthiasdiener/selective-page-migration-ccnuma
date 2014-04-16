@@ -12,6 +12,11 @@
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/CFG.h"
+#if 0
+#include "llvm/Linker.h"
+#endif
+
+#include "FAsanConfig.hpp"
 
 #include <sstream>
 #include <vector>
@@ -73,7 +78,15 @@ bool RangedAddressSanitizer::doInitialization(Module &M)
     	abort();
     }
 
+#if 0 /* using LLVM linking facilities */
+    Linker linker(&M);
+    std::string linkErr;
+    if (linker.linkInModule(fasanModule, Linker::DestroySource, &linkErr)) {
+    	errs() << "[FASAN] Error while linking runtime module: " << fasanModule << "(!!)\n";
+    	abort();
+    }
 
+#else
     PointerType * voidPtrTy = PointerType::getInt8PtrTy(context, 0);
     IntegerType * boolTy = IntegerType::get(context, 1);
     Type * voidTy = Type::getVoidTy(context);
@@ -87,13 +100,34 @@ bool RangedAddressSanitizer::doInitialization(Module &M)
     // migrate check function
     {
         std::string errMsg;
-        ValueToValueMapTy valueMap;
         Function * checkFunc = fasanModule->getFunction("__fasan_check");
         if (!checkFunc) {
                 abort();
         }
-        Function * clonedCheckFunc = CloneFunction(checkFunc, valueMap, false, 0);
-        M.getFunctionList().insert(M.getFunctionList().end(), clonedCheckFunc);
+
+#if 1
+        FunctionType * checkFuncType = checkFunc->getFunctionType();
+        Function * targetFunc = dyn_cast<Function>(M.getOrInsertFunction("__fasan_check", checkFuncType));
+        assert(targetFunc && "function cast to const by getOrInsertFunc..?");
+
+      // Loop over the arguments, copying the names of the mapped arguments over...
+        Function::arg_iterator DestI = targetFunc->arg_begin();
+        for (Function::const_arg_iterator I = checkFunc->arg_begin(), E = checkFunc->arg_end();
+             I != E; ++I)
+           if (reMap.count(I) == 0) {   // Is this argument preserved?
+            DestI->setName(I->getName()); // Copy the name over...
+            reMap[I] = DestI++;        // Add mapping to VMap
+        }
+        SmallVector<ReturnInst*, 8> Returns;  // Ignore returns cloned.
+        CloneFunctionInto(targetFunc, checkFunc, reMap, false, Returns, "", nullptr);
+
+        targetFunc->addAttribute(0,Attribute::SanitizeAddress);
+
+#else
+        Function * clonedCheckFunc = CloneFunction(checkFunc, reMap, false, 0);
+        assert(!M.getFunction("__fasan_check") && "already exists in module");
+        M.getFunctionList().push_back(clonedCheckFunc);
+
         ReuseFn_ = clonedCheckFunc;
         clonedCheckFunc->setLinkage(GlobalValue::InternalLinkage); // avoid conflicts during linking
 
@@ -103,8 +137,9 @@ bool RangedAddressSanitizer::doInitialization(Module &M)
                 RemapInstruction(&Inst, reMap, RF_IgnoreMissingEntries, 0, 0);
             }
         }
+#endif
+#endif
     }
-
     delete fasanModule;
     return true;
 }
@@ -113,9 +148,14 @@ bool RangedAddressSanitizer::doFinalization(Module &M)
 {
     Function * checkFunc = M.getFunction("__fasan_check");
     if (checkFunc) {
+    	for (Value::use_iterator itUse = checkFunc->use_begin(); itUse != checkFunc->use_end(); ++itUse) {
+    		CallInst * call = dyn_cast<CallInst>(*itUse);
+    	}
+
         checkFunc->eraseFromParent();
     }
     return true;
+
 }
 
 void RangedAddressSanitizer::getAnalysisUsage(AnalysisUsage &AU) const {
@@ -157,6 +197,28 @@ void RangedAddressSanitizer::ii_visitLoop(Loop * loop)
             }
         }
     }
+}
+
+
+void RangedAddressSanitizer::markSafeArrayUse(Instruction * inst, Value * array)
+{
+	Value * usedArray;
+	Expr subscript;
+	unsigned size;
+#if 1
+	if (reduceMemoryAccess(inst, usedArray, subscript, size)) {
+		SPM_DEBUG( dbgs() << "FASan: will not check " << *inst << "\n" );
+		safeUseSet.insert(inst);
+	}
+#else
+	Value * ptr = 0;
+	if (LoadInst * loadInst = dyn_cast<LoadInst>(&inst)) {
+		ptr = loadInst->getPointerOperand();
+
+	} else if (StoreInst * storeInst = dyn_cast<StoreInst>(&inst)) {
+		ptr = storeInst->getPointerOperand();
+	}
+#endif
 }
 
 bool RangedAddressSanitizer::runOnFunction(Function &F) {
@@ -263,85 +325,132 @@ bool RangedAddressSanitizer::runOnFunction(Function &F) {
   }
 
   // FAsan logic goes here
+
+  std::map<const BasicBlock*,BasicBlock*> clonedBlockMap; // keeps track of cloned regions to avoid redundant cloning
+
+  std::vector<CallInst*> ToInline;
+
   for (auto &CI : Calls_) {
     BasicBlock * Preheader = CI.Preheader;
     
+  // TODO decide whether it is worthwhile to optimize for this case
+
   // insert range check
     IRBuilder<> IRB(Preheader->getTerminator());
     Value *VoidArray = IRB.CreateBitCast(CI.Array, VoidPtrTy);
     std::vector<Value*> Args = { VoidArray, CI.Min, CI.Max, CI.Reuse };
     CallInst *CR = IRB.CreateCall(ReuseFn_, Args);
+    ToInline.push_back(CR);
     
-  // get loop
-    Loop* finalLoop = CI.FinalLoop;
-    Loop::block_iterator itBodyBlock,S,E;
-    S = finalLoop->block_begin();
-    E = finalLoop->block_end();
-    
-  // clone loop body (cloned loop will run unchecked)
-    ValueToValueMapTy cloneMap;
-    
-    BasicBlock * clonedHeader = 0;
-    std::vector<BasicBlock*> clonedBlocks;
-    
-    for (itBodyBlock = S;itBodyBlock != E; ++itBodyBlock) {
-        
-        const BasicBlock * bodyBlock = *itBodyBlock;
-        BasicBlock * clonedBlock = CloneBasicBlock(bodyBlock, cloneMap, "_checked", &F, 0);
-        
-        cloneMap[bodyBlock] = clonedBlock;
-        clonedBlocks.push_back(clonedBlock);
-        
-        if (bodyBlock == finalLoop->getHeader()) {
-            clonedHeader = clonedBlock;
-            SPM_DEBUG( dbgs() << "FASan: loop header case at " << bodyBlock->getName() << "\n" );             
-        } else {
-            SPM_DEBUG( dbgs() << "FASan: non-header block at " << bodyBlock->getName() << "\n" );             
-        }
-    }
-    
-    if (!clonedHeader) {
-        // TODO run clean-up code
-        SPM_DEBUG( dbgs() << "FASan: could not find header!\n");
-        abort();
-    }
-    
-  // Remap uses inside cloned region (mark pointers in the region as unguarded)
-    for (BasicBlock * block : clonedBlocks) {
-        for(auto & inst : *block) {
-            RemapInstruction(&inst, cloneMap, RF_IgnoreMissingEntries);
-            Value * ptr = 0;
-            if (LoadInst * loadInst = dyn_cast<LoadInst>(&inst)) {
-                ptr = loadInst->getPointerOperand();
-                
-            } else if (StoreInst * storeInst = dyn_cast<StoreInst>(&inst)) {
-                ptr = storeInst->getPointerOperand();
-            }
-            if (ptr) {
-                SPM_DEBUG( dbgs() << "FASan: will not check " << *ptr << "\n" );
-                safeUseSet.insert(&inst);
-            }
-        }
-    }
-    
-   // TODO fix PHI-nodes in exit blocks
-    
-   // Rewire terminator of the range check to branch to the cloned region
-    TerminatorInst * checkTermInst = CR->getParent()->getTerminator();
-    
-    if (BranchInst * checkBranchInst = dyn_cast<BranchInst>(checkTermInst)) {      
-        if (checkBranchInst->isUnconditional()) {            
-            BasicBlock * defTarget = checkBranchInst->getSuccessor(0);
-            BranchInst * modifiedBranchInst = BranchInst::Create(clonedHeader, defTarget, CR, checkBranchInst);
-            checkBranchInst->replaceAllUsesWith(modifiedBranchInst);  
-            checkBranchInst->eraseFromParent();
-        } else {
-            SPM_DEBUG( dbgs() << "FASan: not implemented (branching) " << * checkTermInst << "\n" );
-            abort();
-        }
+ // verify if this loop was already instrumented
+    TerminatorInst * preHeaderTerm = CR->getParent()->getTerminator();
+    BranchInst * preHeaderBranch = dyn_cast<BranchInst>(preHeaderTerm);
+
+    if (preHeaderBranch && preHeaderBranch->isConditional()) {
+
+    // discover the structure of the instrumented code (safe and default region)
+    // abort, if this does not look like instrumented code
+    	BasicBlock * firstTarget = preHeaderBranch->getSuccessor(0);
+    	BasicBlock * secondTarget = preHeaderBranch->getSuccessor(1);
+    	BasicBlock * safeHeader, * defHeader;
+    	if (clonedBlockMap.count(firstTarget)) {
+    		defHeader = firstTarget;
+    		safeHeader = clonedBlockMap[firstTarget];
+    		assert(safeHeader == secondTarget);
+    	} else {
+    		assert(clonedBlockMap.count(secondTarget));
+    		defHeader = secondTarget;
+			safeHeader = clonedBlockMap[secondTarget];
+			assert(safeHeader == firstTarget);
+    	}
+
+    	SPM_DEBUG( dbgs() << "FASan: (Unsupported) second array in safe region controlled by " << * preHeaderBranch << "\n" );
+    	Loop * defLoop = LI_->getLoopFor(defHeader);
+    	assert(defLoop && "default region is not a loop!");
+
+		Loop::block_iterator itBodyBlock,S,E;
+		S = defLoop->block_begin();
+		E = defLoop->block_end();
+
+	// mark accesses in cloned region as safe
+    	for (itBodyBlock = S;itBodyBlock != E; ++itBodyBlock) {
+    		BasicBlock * defBodyBlock = *itBodyBlock;
+    		BasicBlock * safeBodyBlock = clonedBlockMap[defBodyBlock];
+
+    		for(auto & inst : *safeBodyBlock) {
+				markSafeArrayUse(&inst, CI.Array);
+			}
+    	}
+
+    // add conjunctive test
+    	Value * oldCond = preHeaderBranch->getCondition();
+    	Value * joinedCond = IRB.CreateAnd(oldCond, CR, "allsafe");
+    	preHeaderBranch->setCondition(joinedCond);
+
     } else {
-        SPM_DEBUG( dbgs() << "FASan: unsupported terminator type " << * checkTermInst << "\n" );
-        abort();
+
+	  // get loop
+		Loop* finalLoop = CI.FinalLoop;
+		Loop::block_iterator itBodyBlock,S,E;
+		S = finalLoop->block_begin();
+		E = finalLoop->block_end();
+
+	  // clone loop body (cloned loop will run unchecked)
+		ValueToValueMapTy cloneMap;
+
+		BasicBlock * clonedHeader = 0;
+		std::vector<BasicBlock*> clonedBlocks;
+
+		for (itBodyBlock = S;itBodyBlock != E; ++itBodyBlock) {
+
+			const BasicBlock * bodyBlock = *itBodyBlock;
+			BasicBlock * clonedBlock = CloneBasicBlock(bodyBlock, cloneMap, "_checked", &F, 0);
+
+			cloneMap[bodyBlock] = clonedBlock;
+			clonedBlockMap[bodyBlock] = clonedBlock;
+			clonedBlocks.push_back(clonedBlock);
+
+			if (bodyBlock == finalLoop->getHeader()) {
+				clonedHeader = clonedBlock;
+				SPM_DEBUG( dbgs() << "FASan: loop header case at " << bodyBlock->getName() << "\n" );
+			} else {
+				SPM_DEBUG( dbgs() << "FASan: non-header block at " << bodyBlock->getName() << "\n" );
+			}
+		}
+
+		if (!clonedHeader) {
+			// TODO run clean-up code
+			SPM_DEBUG( dbgs() << "FASan: could not find header!\n");
+			abort();
+		}
+
+	  // Remap uses inside cloned region (mark pointers in the region as unguarded)
+		for (BasicBlock * block : clonedBlocks) {
+			for(auto & inst : *block) {
+				RemapInstruction(&inst, cloneMap, RF_IgnoreMissingEntries);
+				markSafeArrayUse(&inst, CI.Array);
+			}
+		}
+
+	   // TODO fix PHI-nodes in exit blocks
+
+	   // Rewire terminator of the range check to branch to the cloned region
+		TerminatorInst * checkTermInst = CR->getParent()->getTerminator();
+
+		if (BranchInst * checkBranchInst = dyn_cast<BranchInst>(checkTermInst)) {
+			if (checkBranchInst->isUnconditional()) {
+				BasicBlock * defTarget = checkBranchInst->getSuccessor(0);
+				BranchInst * modifiedBranchInst = BranchInst::Create(clonedHeader, defTarget, CR, checkBranchInst);
+				checkBranchInst->replaceAllUsesWith(modifiedBranchInst);
+				checkBranchInst->eraseFromParent();
+			} else {
+				SPM_DEBUG( dbgs() << "FASan: Unexpected conditional branch (preheader should branch unconditional, other array checks will introduce conditional branches) " << * checkTermInst << "\n" );
+				abort();
+			}
+		} else {
+			SPM_DEBUG( dbgs() << "FASan: unsupported terminator type " << * checkTermInst << "\n" );
+			abort();
+		}
     }
     
 #if 0
@@ -350,14 +459,46 @@ bool RangedAddressSanitizer::runOnFunction(Function &F) {
 #endif
     SPM_DEBUG(dbgs() << "RangedAddressSanitizer: call instruction: " << *CR
                      << "\n");
-
-   // Supplement range check
-    InlineFunctionInfo IFI;
-    InlineFunction(CR, IFI, false);
-
   }
 
+
+  // inline calls
+#ifdef FASAN_INLINE_RUNTIME
+  for (CallInst * call : ToInline) {
+	assert(call);
+	InlineFunctionInfo IFI;
+	InlineFunction(call, IFI, false);
+  }
+#endif
+
   SPM_DEBUG( F.dump() );
+  return true;
+}
+
+bool RangedAddressSanitizer::reduceMemoryAccess(Instruction * I, Value *& oArray, Expr & oSubscript, unsigned & oSize)
+{
+  if (LoadInst * loadInst = dyn_cast<LoadInst>(I)) {
+    if (!RI_->reduceLoad(loadInst, oArray, oSubscript)) {
+      SPM_DEBUG(dbgs() << "RangedAddressSanitizer: could not reduce load "
+                        << *I << "\n");
+      return false;
+    }
+    oSize = DL_->getTypeAllocSize(I->getType());
+    SPM_DEBUG(dbgs() << "RangedAddressSanitizer: reduced load " << *I
+                     << " to: " << *oArray  << " + " << oSubscript << "\n");
+      return true;
+  } else if (StoreInst * storeInst = dyn_cast<StoreInst>(I)) {
+    if (!RI_->reduceStore(storeInst, oArray, oSubscript)) {
+      SPM_DEBUG(dbgs() << "RangedAddressSanitizer: could not reduce store "
+                        << *I << "\n");
+      return false;
+    }
+    oSize = DL_->getTypeAllocSize(I->getOperand(0)->getType());
+    SPM_DEBUG(dbgs() << "RangedAddressSanitizer: reduced store " << *I
+                     << " to: " << *oArray  << " + " << oSubscript << "\n");
+      return true;
+  }
+
   return false;
 }
 
@@ -369,24 +510,8 @@ bool RangedAddressSanitizer::generateCallFor(Loop *L, Instruction *I) {
   Value *Array;
   unsigned Size;
   Expr Subscript;
-  if (isa<LoadInst>(I)) {
-    if (!RI_->reduceLoad(cast<LoadInst>(I), Array, Subscript)) {
-      SPM_DEBUG(dbgs() << "RangedAddressSanitizer: could not reduce load "
-                        << *I << "\n");
-      return false;
-    }
-    Size = DL_->getTypeAllocSize(I->getType());
-    SPM_DEBUG(dbgs() << "RangedAddressSanitizer: reduced load " << *I
-                     << " to: " << *Array  << " + " << Subscript << "\n");
-  } else {
-    if (!RI_->reduceStore(cast<StoreInst>(I), Array, Subscript)) {
-      SPM_DEBUG(dbgs() << "RangedAddressSanitizer: could not reduce store "
-                        << *I << "\n");
-      return false;
-    }
-    Size = DL_->getTypeAllocSize(I->getOperand(0)->getType());
-    SPM_DEBUG(dbgs() << "RangedAddressSanitizer: reduced store " << *I
-                     << " to: " << *Array  << " + " << Subscript << "\n");
+  if (!reduceMemoryAccess(I, Array, Subscript, Size)) {
+     return false;
   }
 
 #ifdef ENABLE_REUSE

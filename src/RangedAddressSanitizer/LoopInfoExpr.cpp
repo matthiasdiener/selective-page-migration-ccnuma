@@ -3,6 +3,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include <cassert>
+#include "FAsanConfig.hpp"
 
 /* ************************************************************************** */
 /* ************************************************************************** */
@@ -100,6 +101,10 @@ Expr LoopInfoExpr::getExprForLoop(Loop *L, Value *V) {
     	BasicBlock * phiBlock = I->getParent();
     	Loop *loop = LI_->getLoopFor(phiBlock);
 
+    	if (!loop) {
+    		return Expr(V);
+    	}
+
     	if (loop->getHeader() == phiBlock) {
     		return Expr(V);
     	} else {
@@ -110,8 +115,8 @@ Expr LoopInfoExpr::getExprForLoop(Loop *L, Value *V) {
     		for (uint i = 1; i < numIncoming; ++i) {
     			Expr inExpr = getExprForLoop(L, phi->getIncomingValue(i));
     			if (firstExpr != inExpr) {
-    				dbgs() << "[LIE] Non-trivial PHI-node usage out of loop header. Aborting (Unsupported)..\n";
-    				abort();
+    				dbgs() << "[LIE] Non-trivial PHI-node usage out of loop header (Unsupported)..\n";
+    				return Expr(V); // FIXME
     			}
     		}
     		return firstExpr;
@@ -157,7 +162,7 @@ bool LoopInfoExpr::
           foundCoTrip = true;
       }
   }
-  assert(foundCoStart && foundCoTrip);
+  FASAN_CHECK(foundCoStart && foundCoTrip, return false);
   
  // Determine the step size (over-approximate the step size)
     ExprMap Repls;
@@ -178,7 +183,8 @@ bool LoopInfoExpr::
 bool LoopInfoExpr::
       getLoopInfo(Loop *L, PHINode *&Indvar, Expr &IndvarStart,
                   Expr &IndvarEnd, Expr &IndvarStep) {
-  assert(L);
+  FASAN_CHECK(L,return false)
+
   BasicBlock *Exit = L->getExitingBlock();
   if (!Exit)
     return false;
