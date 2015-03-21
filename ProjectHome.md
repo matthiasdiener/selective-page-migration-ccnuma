@@ -1,0 +1,1 @@
+We propose a LLVM optimization library that can do selective memory page migration in ccNUMA systems using an heuristic based in a loop trip counter predictor and an array's elements access pattern predictor.
